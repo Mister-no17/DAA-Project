@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Energy-Aware Shortest Path | DAA Mini-Project</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="orb orb-one"></div>
+  <div class="orb orb-two"></div>
+
+  <main class="app-shell">
+    <header class="hero panel">
+      <h1>Energy-Aware Shortest Path Algorithm</h1>
+      <p>
+        Compare classic Dijkstra against a modified energy-aware version using
+        wind direction, wind strength, and altitude changes.
+      </p>
+    </header>
+
+    <section class="layout">
+      <aside class="panel controls">
+        <h2>Controls</h2>
+
+        <button id="startTourBtn" class="secondary-btn tour-btn" type="button">Start Guided Tour</button>
+
+        <div class="control-group">
+          <label for="scenarioSelect">Preset Scenario</label>
+          <div class="inline-controls">
+            <select id="scenarioSelect"></select>
+            <button id="loadScenarioBtn" class="secondary-btn">Load</button>
+          </div>
+          <p id="scenarioDescription" class="muted-text"></p>
+        </div>
+
+        <div class="control-group">
+          <label for="windDirection">Wind Direction</label>
+          <select id="windDirection"></select>
+        </div>
+
+        <div class="control-group">
+          <label for="windStrength">
+            Wind Strength: <span id="windStrengthValue">1.5</span>
+          </label>
+          <input id="windStrength" type="range" min="0" max="3" step="0.1" value="1.5" />
+        </div>
+
+        <div class="control-group">
+          <label for="altitudeFactor">
+            Altitude Cost Factor: <span id="altitudeFactorValue">1.0</span>
+          </label>
+          <input id="altitudeFactor" type="range" min="0" max="3" step="0.1" value="1.0" />
+        </div>
+
+        <div class="control-group">
+          <label class="checkbox-label" for="dynamicWindEnabled">
+            <input id="dynamicWindEnabled" type="checkbox" />
+            Enable Sudden Wind Shift
+          </label>
+        </div>
+
+        <div id="windShiftControls" class="wind-shift-panel">
+          <div class="control-group">
+            <label for="windShiftStep">
+              Shift Step: <span id="windShiftStepValue">6</span>
+            </label>
+            <input id="windShiftStep" type="range" min="1" max="30" step="1" value="6" />
+          </div>
+
+          <div class="control-group">
+            <label for="windDirectionAfterShift">Post-shift Direction</label>
+            <select id="windDirectionAfterShift"></select>
+          </div>
+
+          <div class="control-group">
+            <label for="windStrengthAfterShift">
+              Post-shift Strength: <span id="windStrengthAfterShiftValue">2.2</span>
+            </label>
+            <input id="windStrengthAfterShift" type="range" min="0" max="3.5" step="0.1" value="2.2" />
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label class="checkbox-label" for="obstaclePaintMode">
+            <input id="obstaclePaintMode" type="checkbox" />
+            Obstacle Paint Mode
+          </label>
+        </div>
+
+        <div class="control-group">
+          <label for="obstacleDensity">
+            Random Obstacle Density: <span id="obstacleDensityValue">0.18</span>
+          </label>
+          <input id="obstacleDensity" type="range" min="0" max="0.35" step="0.01" value="0.18" />
+        </div>
+
+        <div class="button-grid">
+          <button id="randomObstacleBtn" class="ghost-btn">Generate Obstacles</button>
+          <button id="clearObstacleBtn" class="ghost-btn">Clear Obstacles</button>
+          <button id="randomizeBtn" class="ghost-btn">Randomize Altitude</button>
+          <button id="resetSelectionBtn" class="ghost-btn">Reset Start/End</button>
+          <button id="runBtn" class="primary-btn">Run Both Algorithms</button>
+        </div>
+
+        <p class="help-text">
+          Click one grid cell to set <strong>start</strong>, then click another to set
+          <strong>end</strong>. If obstacle paint mode is enabled, use <strong>Shift + Click</strong>
+          to add or remove blocked cells.
+        </p>
+
+        <p id="statusLine" class="status-line">Ready.</p>
+      </aside>
+
+      <section class="visuals">
+        <article class="panel">
+          <h2>Grid Visualization</h2>
+
+          <div class="legend">
+            <span><i class="swatch start"></i> Start</span>
+            <span><i class="swatch end"></i> End</span>
+            <span><i class="swatch baseline"></i> Standard Dijkstra Path</span>
+            <span><i class="swatch energy"></i> Energy-Aware Path</span>
+            <span><i class="swatch overlap"></i> Shared Path Cell</span>
+            <span><i class="swatch blocked"></i> Obstacle (No-fly)</span>
+          </div>
+
+          <div id="grid" class="grid" aria-label="Path planning grid"></div>
+        </article>
+
+        <article class="panel results-panel">
+          <h2>Comparison Results</h2>
+
+          <div id="statsCards" class="stats-cards"></div>
+
+          <div class="table-wrap">
+            <table id="comparisonTable">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Standard Dijkstra</th>
+                  <th>Modified Dijkstra</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div id="pathSummary" class="path-summary"></div>
+          <div id="resultExplanation" class="result-explanation"></div>
+        </article>
+      </section>
+    </section>
+  </main>
+
+  <div id="tourOverlay" class="tour-overlay hidden" role="dialog" aria-modal="true" aria-live="polite" aria-label="Guided tour">
+    <article class="tour-card">
+      <p id="tourStepCounter" class="tour-step-counter"></p>
+      <h3 id="tourTitle"></h3>
+      <p id="tourBody" class="tour-body"></p>
+      <div class="tour-actions">
+        <button id="tourBackBtn" class="ghost-btn" type="button">Back</button>
+        <button id="tourSkipBtn" class="secondary-btn tour-skip-btn" type="button">Skip</button>
+        <button id="tourNextBtn" class="primary-btn" type="button">Next</button>
+      </div>
+    </article>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
