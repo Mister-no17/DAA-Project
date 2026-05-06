@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <title>pydeck</title>
+        <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v1.13.0/mapbox-gl.js"></script>
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap-theme.min.css" />
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.6.3/css/font-awesome.min.css" />
+    <script src='https://cdn.jsdelivr.net/npm/@deck.gl/jupyter-widget@~9.0.*/dist/index.js'></script>
+    <style>
+    body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#deck-container {
+  width: 100vw;
+  height: 100vh;
+}
+
+#deck-container canvas {
+  z-index: 1;
+  background: none;
+}
+    </style>
+  </head>
+  <body>
+    <div id="deck-container">
+    </div>
+  </body>
+  <script>
+    const container = document.getElementById('deck-container');
+    const jsonInput = {
+  "initialViewState": {
+    "latitude": 59.088299,
+    "longitude": 18.795349,
+    "zoom": 8
+  },
+  "layers": [
+    {
+      "@@type": "PathLayer",
+      "data": [
+        {
+          "color": [
+            41,
+            82,
+            13
+          ],
+          "name": "From: Bottenholmen To: Branten",
+          "path": [
+            [
+              18.7151791,
+              59.3756613
+            ],
+            [
+              18.565901,
+              59.2077557
+            ],
+            [
+              18.4098504,
+              59.1133937
+            ],
+            [
+              18.2463997,
+              59.0119334
+            ],
+            [
+              18.0244386,
+              58.8973146
+            ],
+            [
+              17.8341858,
+              58.7902783
+            ]
+          ]
+        },
+        {
+          "color": [
+            202,
+            242,
+            162
+          ],
+          "name": "From: Branten To: Blockhusudden",
+          "path": [
+            [
+              18.1549076,
+              59.3207673
+            ],
+            [
+              18.4522968,
+              59.3617991
+            ],
+            [
+              18.7151791,
+              59.3756613
+            ]
+          ]
+        },
+        {
+          "color": [
+            49,
+            133,
+            99
+          ],
+          "name": "From: Bottenholmen To: Blockhusudden",
+          "path": [
+            [
+              18.1549076,
+              59.3207673
+            ],
+            [
+              18.3763635,
+              59.3629226
+            ],
+            [
+              18.4922522,
+              59.182294
+            ],
+            [
+              18.4075759,
+              59.1244125
+            ],
+            [
+              18.1863258,
+              58.9782316
+            ],
+            [
+              18.0244386,
+              58.8973146
+            ],
+            [
+              17.8341858,
+              58.7902783
+            ]
+          ]
+        }
+      ],
+      "getColor": "@@=color",
+      "getPath": "@@=path",
+      "getWidth": 5,
+      "id": "54654151-8bac-49f6-b3ce-5c1220e5ed43",
+      "pickable": true,
+      "widthMinPixels": 5,
+      "widthScale": 20
+    },
+    {
+      "@@type": "ScatterplotLayer",
+      "data": [
+        {
+          "coordinates": [
+            18.1549076,
+            59.3207673
+          ],
+          "name": "Blockhusudden"
+        },
+        {
+          "coordinates": [
+            17.2215701,
+            58.7017873
+          ],
+          "name": "Ledsk\u00e4r"
+        },
+        {
+          "coordinates": [
+            17.4552115,
+            59.4724307
+          ],
+          "name": "Stora G\u00e5sholmen"
+        },
+        {
+          "coordinates": [
+            17.4303905,
+            59.4721468
+          ],
+          "name": "Lastberget"
+        },
+        {
+          "coordinates": [
+            17.3980372,
+            59.4349189
+          ],
+          "name": "Ytterholmen"
+        },
+        {
+          "coordinates": [
+            16.8734325,
+            58.6066404
+          ],
+          "name": "Harg\u00f6kalv"
+        },
+        {
+          "coordinates": [
+            19.0244062,
+            59.2780186
+          ],
+          "name": "Gr\u00f6nsk\u00e4r"
+        },
+        {
+          "coordinates": [
+            18.9466436,
+            59.2564822
+          ],
+          "name": "\u00d6stersk\u00e4r"
+        },
+        {
+          "coordinates": [
+            18.4922522,
+            59.182294
+          ],
+          "name": "\u00d6stra Stend\u00f6rren"
+        },
+        {
+          "coordinates": [
+            18.6182758,
+            59.2235586
+          ],
+          "name": "Kofoten"
+        },
+        {
+          "coordinates": [
+            18.565901,
+            59.2077557
+          ],
+          "name": "Gr\u00f6n\u00f6"
+        },
+        {
+          "coordinates": [
+            18.6135129,
+            59.2178016
+          ],
+          "name": "Kofotsgrund"
+        },
+        {
+          "coordinates": [
+            19.0294274,
+            59.3934134
+          ],
+          "name": "Tvikobben"
+        },
+        {
+          "coordinates": [
+            18.9524248,
+            59.4302773
+          ],
+          "name": "Stenkobbsgrund"
+        },
+        {
+          "coordinates": [
+            18.9058001,
+            59.4111327
+          ],
+          "name": "P\u00e5lkobb"
+        },
+        {
+          "coordinates": [
+            18.015065,
+            58.8569614
+          ],
+          "name": "M\u00e5sknuv"
+        },
+        {
+          "coordinates": [
+            18.4180074,
+            59.4690126
+          ],
+          "name": "Ek\u00f6ren"
+        },
+        {
+          "coordinates": [
+            18.4275561,
+            59.4566177
+          ],
+          "name": "Mj\u00f6lk\u00f6"
+        },
+        {
+          "coordinates": [
+            18.3874517,
+            59.4532248
+          ],
+          "name": "Lerviksudde"
+        },
+        {
+          "coordinates": [
+            18.4162908,
+            59.4453718
+          ],
+          "name": "\u00d6stra \u00c4lg\u00f6grund"
+        },
+        {
+          "coordinates": [
+            18.5174352,
+            59.5024786
+          ],
+          "name": "Sandkullen"
+        },
+        {
+          "coordinates": [
+            18.4592061,
+            59.4977779
+          ],
+          "name": "Vallersvik"
+        },
+        {
+          "coordinates": [
+            18.4399153,
+            59.4427844
+          ],
+          "name": "Bjur\u00f6grund"
+        },
+        {
+          "coordinates": [
+            18.4977441,
+            59.4327159
+          ],
+          "name": "Val\u00f6arna"
+        },
+        {
+          "coordinates": [
+            18.5014335,
+            59.4206668
+          ],
+          "name": "Lindalen \u00f6vre"
+        },
+        {
+          "coordinates": [
+            18.3656936,
+            59.4275977
+          ],
+          "name": "V\u00e4stra R\u00f6nnholmen"
+        },
+        {
+          "coordinates": [
+            18.4522968,
+            59.3617991
+          ],
+          "name": "S\u00f6dern\u00e4s"
+        },
+        {
+          "coordinates": [
+            18.4150892,
+            59.358584
+          ],
+          "name": "Lagn\u00f6grund"
+        },
+        {
+          "coordinates": [
+            18.3891683,
+            59.3714207
+          ],
+          "name": "Tynning\u00f6"
+        },
+        {
+          "coordinates": [
+            18.485516,
+            59.4216793
+          ],
+          "name": "Lindalen nedre"
+        },
+        {
+          "coordinates": [
+            18.4113672,
+            59.4253173
+          ],
+          "name": "Stora Berteln"
+        },
+        {
+          "coordinates": [
+            18.3763635,
+            59.3629226
+          ],
+          "name": "V\u00e4rmd\u00f6-Garpen"
+        },
+        {
+          "coordinates": [
+            18.3352506,
+            59.371713
+          ],
+          "name": "Furuholmen"
+        },
+        {
+          "coordinates": [
+            18.294481,
+            59.3776595
+          ],
+          "name": "Granholmen"
+        },
+        {
+          "coordinates": [
+            18.3040082,
+            59.3808072
+          ],
+          "name": "Bogesund"
+        },
+        {
+          "coordinates": [
+            18.3105313,
+            59.3664653
+          ],
+          "name": "Bj\u00f6rnsgrund"
+        },
+        {
+          "coordinates": [
+            18.2797181,
+            59.3741179
+          ],
+          "name": "Stora H\u00f6ggarnsbank"
+        },
+        {
+          "coordinates": [
+            18.2687318,
+            59.3656343
+          ],
+          "name": "Lilla H\u00f6ggarnsbank"
+        },
+        {
+          "coordinates": [
+            18.2590061,
+            59.3639859
+          ],
+          "name": "Elfsviksgrund"
+        },
+        {
+          "coordinates": [
+            18.1764136,
+            59.3322815
+          ],
+          "name": "Libertus"
+        },
+        {
+          "coordinates": [
+            18.874629,
+            59.30081
+          ],
+          "name": "Getholmen"
+        },
+        {
+          "coordinates": [
+            18.8688062,
+            59.3004762
+          ],
+          "name": "Sm\u00f6rasken"
+        },
+        {
+          "coordinates": [
+            18.8102374,
+            59.3133074
+          ],
+          "name": "Yxhammaskobben"
+        },
+        {
+          "coordinates": [
+            18.8108168,
+            59.3182952
+          ],
+          "name": "Gastholmsgrund"
+        },
+        {
+          "coordinates": [
+            19.000052,
+            59.2773535
+          ],
+          "name": "Sandhamns St\u00e5ngsk\u00e4r"
+        },
+        {
+          "coordinates": [
+            18.8964651,
+            59.2637739
+          ],
+          "name": "\u00c5dkubben"
+        },
+        {
+          "coordinates": [
+            18.8964591,
+            59.2580578
+          ],
+          "name": "Stora H\u00e4stsk\u00e4r"
+        },
+        {
+          "coordinates": [
+            18.8940887,
+            59.286577
+          ],
+          "name": "Sk\u00f6tkobben"
+        },
+        {
+          "coordinates": [
+            18.7472377,
+            59.3169703
+          ],
+          "name": "Trollharan"
+        },
+        {
+          "coordinates": [
+            18.7590716,
+            59.3049249
+          ],
+          "name": "L\u00e5ngholmen"
+        },
+        {
+          "coordinates": [
+            18.8304935,
+            59.3559285
+          ],
+          "name": "Fj\u00e4rdholmen"
+        },
+        {
+          "coordinates": [
+            18.7522528,
+            59.3718629
+          ],
+          "name": "Kl\u00f6vholmen"
+        },
+        {
+          "coordinates": [
+            18.7446213,
+            59.3696715
+          ],
+          "name": "Norra Kanholmen"
+        },
+        {
+          "coordinates": [
+            18.6057853,
+            59.3697915
+          ],
+          "name": "Boda"
+        },
+        {
+          "coordinates": [
+            18.5714369,
+            59.3840521
+          ],
+          "name": "Sand\u00f6 Sugga"
+        },
+        {
+          "coordinates": [
+            18.5234371,
+            59.4043866
+          ],
+          "name": "Nyvarp"
+        },
+        {
+          "coordinates": [
+            18.4299884,
+            59.1317014
+          ],
+          "name": "Genb\u00f6te"
+        },
+        {
+          "coordinates": [
+            18.4223451,
+            59.128426
+          ],
+          "name": "Stenholmen"
+        },
+        {
+          "coordinates": [
+            18.4075759,
+            59.1244125
+          ],
+          "name": "Jutholmen"
+        },
+        {
+          "coordinates": [
+            18.4264265,
+            59.1206518
+          ],
+          "name": "Riksdalersk\u00e4ret"
+        },
+        {
+          "coordinates": [
+            18.7151269,
+            59.2964034
+          ],
+          "name": "Run\u00f6"
+        },
+        {
+          "coordinates": [
+            18.6654999,
+            59.2478587
+          ],
+          "name": "Franska Stenarna"
+        },
+        {
+          "coordinates": [
+            18.5546952,
+            59.1555416
+          ],
+          "name": "Fj\u00e4rdh\u00e4llan"
+        },
+        {
+          "coordinates": [
+            18.4640525,
+            59.142995
+          ],
+          "name": "Piltholmsknall"
+        },
+        {
+          "coordinates": [
+            18.4390356,
+            59.1401405
+          ],
+          "name": "Hummelkl\u00e4pp"
+        },
+        {
+          "coordinates": [
+            18.867282,
+            59.2818179
+          ],
+          "name": "Svartgrund"
+        },
+        {
+          "coordinates": [
+            18.857614,
+            59.2852018
+          ],
+          "name": "Vindals\u00f6"
+        },
+        {
+          "coordinates": [
+            18.7104698,
+            59.2867321
+          ],
+          "name": "Tegelh\u00e4llan"
+        },
+        {
+          "coordinates": [
+            18.4098504,
+            59.1133937
+          ],
+          "name": "Segholmen"
+        },
+        {
+          "coordinates": [
+            18.3971172,
+            59.1141841
+          ],
+          "name": "Asp\u00f6sk\u00e4r"
+        },
+        {
+          "coordinates": [
+            18.2985709,
+            59.0734131
+          ],
+          "name": "L\u00e5nggarn"
+        },
+        {
+          "coordinates": [
+            18.2463997,
+            59.0119334
+          ],
+          "name": "S\u00f6derh\u00e4ll"
+        },
+        {
+          "coordinates": [
+            18.2579569,
+            59.0028929
+          ],
+          "name": "Mysingeholm"
+        },
+        {
+          "coordinates": [
+            18.1863258,
+            58.9782316
+          ],
+          "name": "\u00c4lvsnabben"
+        },
+        {
+          "coordinates": [
+            18.367085,
+            59.1103886
+          ],
+          "name": "Torrb\u00e4nken"
+        },
+        {
+          "coordinates": [
+            18.3728788,
+            59.1066132
+          ],
+          "name": "Kycklingen"
+        },
+        {
+          "coordinates": [
+            18.3490608,
+            59.0936875
+          ],
+          "name": "G\u00e5l\u00f6"
+        },
+        {
+          "coordinates": [
+            18.082814,
+            58.9066752
+          ],
+          "name": "\u00d6stra R\u00f6ko"
+        },
+        {
+          "coordinates": [
+            18.0244386,
+            58.8973146
+          ],
+          "name": "\u00d6rngrund"
+        },
+        {
+          "coordinates": [
+            17.9454345,
+            58.792027
+          ],
+          "name": "Viksten NV"
+        },
+        {
+          "coordinates": [
+            17.8764771,
+            58.7301639
+          ],
+          "name": "Landsorts Bredgrund"
+        },
+        {
+          "coordinates": [
+            18.0523883,
+            58.7750031
+          ],
+          "name": "Gunnarstenarna"
+        },
+        {
+          "coordinates": [
+            19.1255333,
+            59.1546901
+          ],
+          "name": "Almagrundet"
+        },
+        {
+          "coordinates": [
+            19.0128333,
+            59.2509444
+          ],
+          "name": "Revengegrundet"
+        },
+        {
+          "coordinates": [
+            18.9744444,
+            59.2699444
+          ],
+          "name": "Sv\u00e4ngen"
+        },
+        {
+          "coordinates": [
+            18.5682658,
+            58.9629711
+          ],
+          "name": "Huvudsk\u00e4r"
+        },
+        {
+          "coordinates": [
+            19.5017967,
+            59.4437631
+          ],
+          "name": "Svenska H\u00f6garna"
+        },
+        {
+          "coordinates": [
+            17.8491224,
+            58.7661642
+          ],
+          "name": "Grisbl\u00e4nkan"
+        },
+        {
+          "coordinates": [
+            17.8642541,
+            58.7787736
+          ],
+          "name": "Storpelles Holme"
+        },
+        {
+          "coordinates": [
+            17.8493196,
+            58.7806422
+          ],
+          "name": "Grissk\u00e4r"
+        },
+        {
+          "coordinates": [
+            17.8682023,
+            58.7938079
+          ],
+          "name": "\u00d6landssten"
+        },
+        {
+          "coordinates": [
+            17.8341858,
+            58.7902783
+          ],
+          "name": "Bottenholmen"
+        },
+        {
+          "coordinates": [
+            17.7796038,
+            58.7893454
+          ],
+          "name": "V\u00e4stra R\u00f6ko"
+        },
+        {
+          "coordinates": [
+            17.7768785,
+            58.8019895
+          ],
+          "name": "Kolgusk\u00e4r"
+        },
+        {
+          "coordinates": [
+            17.7487576,
+            58.7978147
+          ],
+          "name": "Granklubben"
+        },
+        {
+          "coordinates": [
+            17.6982916,
+            58.7829709
+          ],
+          "name": "Asenskallen"
+        },
+        {
+          "coordinates": [
+            17.7092439,
+            58.78856
+          ],
+          "name": "Skvallran"
+        },
+        {
+          "coordinates": [
+            17.739995,
+            58.8240057
+          ],
+          "name": "Vattkluben"
+        },
+        {
+          "coordinates": [
+            17.7288133,
+            58.8249234
+          ],
+          "name": "Torsken"
+        },
+        {
+          "coordinates": [
+            17.7554483,
+            58.8312271
+          ],
+          "name": "S\u00f6dra Bergholmen"
+        },
+        {
+          "coordinates": [
+            17.7238351,
+            58.8420694
+          ],
+          "name": "Fif\u00e5ng"
+        },
+        {
+          "coordinates": [
+            17.7161333,
+            58.8791667
+          ],
+          "name": "G\u00e5lklubb"
+        },
+        {
+          "coordinates": [
+            17.7135354,
+            58.9057816
+          ],
+          "name": "Stensk\u00e4r"
+        },
+        {
+          "coordinates": [
+            17.7247792,
+            58.9642216
+          ],
+          "name": "Regarn"
+        },
+        {
+          "coordinates": [
+            17.7126342,
+            59.0070751
+          ],
+          "name": "Egelsholm"
+        },
+        {
+          "coordinates": [
+            17.6849538,
+            59.0545761
+          ],
+          "name": "Notholmen"
+        },
+        {
+          "coordinates": [
+            17.6613718,
+            59.0964246
+          ],
+          "name": "Farstan\u00e4s"
+        },
+        {
+          "coordinates": [
+            17.6783341,
+            59.0998078
+          ],
+          "name": "Brandalsund"
+        },
+        {
+          "coordinates": [
+            17.6855117,
+            59.1058679
+          ],
+          "name": "Norrviken"
+        },
+        {
+          "coordinates": [
+            17.6841169,
+            59.1271802
+          ],
+          "name": "Fl\u00e4skl\u00f6sa"
+        },
+        {
+          "coordinates": [
+            17.6690644,
+            59.1606088
+          ],
+          "name": "Halls Holme"
+        },
+        {
+          "coordinates": [
+            17.9593766,
+            58.8961184
+          ],
+          "name": "Bedar\u00f6"
+        },
+        {
+          "coordinates": [
+            18.7151791,
+            59.3756613
+          ],
+          "name": "Branten"
+        },
+        {
+          "coordinates": [
+            17.9777762,
+            58.9180581
+          ],
+          "name": "Brunsviksholmen"
+        },
+        {
+          "coordinates": [
+            17.1425538,
+            58.71576
+          ],
+          "name": "S\u00e4lgrund"
+        },
+        {
+          "coordinates": [
+            18.9019994,
+            59.4126354
+          ],
+          "name": "Stora M\u00f6ja"
+        },
+        {
+          "coordinates": [
+            18.1025242,
+            59.3959502
+          ],
+          "name": "Djursholmsudde"
+        },
+        {
+          "coordinates": [
+            18.2091557,
+            59.3345855
+          ],
+          "name": "Kungshamn"
+        },
+        {
+          "coordinates": [
+            18.3619064,
+            59.3959409
+          ],
+          "name": "Sandgrundet"
+        },
+        {
+          "coordinates": [
+            18.40425,
+            59.4237833
+          ],
+          "name": "Br\u00f6dstycket"
+        },
+        {
+          "coordinates": [
+            18.3916,
+            59.4309833
+          ],
+          "name": "Tister\u00f6grund"
+        },
+        {
+          "coordinates": [
+            18.5364822,
+            59.3954648
+          ],
+          "name": "Bolviksn\u00e4s"
+        },
+        {
+          "coordinates": [
+            18.6142185,
+            59.3738786
+          ],
+          "name": "Kalv\u00f6"
+        },
+        {
+          "coordinates": [
+            18.6554132,
+            59.3799381
+          ],
+          "name": "Magarna"
+        },
+        {
+          "coordinates": [
+            18.6734587,
+            59.3763143
+          ],
+          "name": "Sollenkroka"
+        },
+        {
+          "coordinates": [
+            18.8886362,
+            59.2947381
+          ],
+          "name": "Farfarsgrund"
+        },
+        {
+          "coordinates": [
+            17.555392,
+            58.7995158
+          ],
+          "name": "Nedre Kockelsk\u00e4r"
+        },
+        {
+          "coordinates": [
+            17.548039,
+            58.7926577
+          ],
+          "name": "H\u00f6k\u00f6 Gupa"
+        },
+        {
+          "coordinates": [
+            17.4781667,
+            58.77965
+          ],
+          "name": "K\u00e4llvik"
+        },
+        {
+          "coordinates": [
+            17.4674833,
+            58.5941
+          ],
+          "name": "Gustav Dal\u00e9n"
+        },
+        {
+          "coordinates": [
+            18.4201333,
+            59.1338333
+          ],
+          "name": "Dalar\u00f6"
+        },
+        {
+          "coordinates": [
+            17.1093929,
+            58.6472777
+          ],
+          "name": "Fem\u00f6rehuvud"
+        },
+        {
+          "coordinates": [
+            19.1807468,
+            59.3974231
+          ],
+          "name": "Pr\u00e4stkobben"
+        },
+        {
+          "coordinates": [
+            16.8836989,
+            59.4813647
+          ],
+          "name": "H\u00e4stsk\u00e4r"
+        },
+        {
+          "coordinates": [
+            18.1514905,
+            59.3034553
+          ],
+          "name": "AGA-fyren"
+        },
+        {
+          "coordinates": [
+            17.6065664,
+            59.2841008
+          ],
+          "name": "L\u00e5ngh\u00e4llsudde"
+        },
+        {
+          "coordinates": [
+            17.5794765,
+            59.2684638
+          ],
+          "name": "Bornhuvud"
+        },
+        {
+          "coordinates": [
+            20.036944,
+            59.500833
+          ],
+          "name": "Bogsk\u00e4r"
+        },
+        {
+          "coordinates": [
+            17.7771231,
+            58.7857536
+          ],
+          "name": "R\u00f6kogrundet"
+        },
+        {
+          "coordinates": [
+            17.3864244,
+            59.3262051
+          ],
+          "name": "Rid\u00f6 Pilsk\u00e4r"
+        }
+      ],
+      "filled": true,
+      "getFillColor": [
+        255,
+        140,
+        0
+      ],
+      "getLineColor": [
+        0,
+        0,
+        0
+      ],
+      "getPosition": "@@=coordinates",
+      "getRadius": 100,
+      "id": "4b7793b0-664d-42fb-ac12-ae57d917aeec",
+      "lineWidthMinPixels": 1,
+      "opacity": 0.8,
+      "pickable": true,
+      "radiusMaxPixels": 100,
+      "radiusMinPixels": 1,
+      "radiusScale": 6,
+      "stroked": true
+    },
+    {
+      "@@type": "ScatterplotLayer",
+      "data": [
+        {
+          "coordinates": [
+            17.0297156,
+            58.6276529
+          ],
+          "name": "Unknown: 0"
+        },
+        {
+          "coordinates": [
+            17.0195806,
+            58.6256867
+          ],
+          "name": "Unknown: 1"
+        },
+        {
+          "coordinates": [
+            18.174988,
+            59.3926613
+          ],
+          "name": "Unknown: 2"
+        },
+        {
+          "coordinates": [
+            18.6073114,
+            59.3934398
+          ],
+          "name": "Unknown: 3"
+        },
+        {
+          "coordinates": [
+            17.1749152,
+            58.6906312
+          ],
+          "name": "Unknown: 4"
+        },
+        {
+          "coordinates": [
+            17.9283203,
+            58.8779332
+          ],
+          "name": "Unknown: 5"
+        },
+        {
+          "coordinates": [
+            17.9468014,
+            58.889305
+          ],
+          "name": "Unknown: 6"
+        },
+        {
+          "coordinates": [
+            18.4532407,
+            59.4425523
+          ],
+          "name": "Unknown: 7"
+        },
+        {
+          "coordinates": [
+            18.4304801,
+            59.4476829
+          ],
+          "name": "Unknown: 8"
+        },
+        {
+          "coordinates": [
+            16.9563688,
+            59.4958424
+          ],
+          "name": "Unknown: 9"
+        },
+        {
+          "coordinates": [
+            16.9522167,
+            59.49435
+          ],
+          "name": "Unknown: 10"
+        },
+        {
+          "coordinates": [
+            18.3892139,
+            59.3270721
+          ],
+          "name": "Unknown: 11"
+        },
+        {
+          "coordinates": [
+            17.9325873,
+            59.3040081
+          ],
+          "name": "Unknown: 12"
+        },
+        {
+          "coordinates": [
+            18.408613,
+            59.3184289
+          ],
+          "name": "Unknown: 13"
+        },
+        {
+          "coordinates": [
+            17.2726667,
+            59.444
+          ],
+          "name": "Unknown: 14"
+        },
+        {
+          "coordinates": [
+            17.4693353,
+            58.765047
+          ],
+          "name": "Unknown: 15"
+        },
+        {
+          "coordinates": [
+            18.1523917,
+            59.3432221
+          ],
+          "name": "Unknown: 16"
+        }
+      ],
+      "filled": true,
+      "getFillColor": [
+        0,
+        140,
+        230
+      ],
+      "getLineColor": [
+        0,
+        0,
+        0
+      ],
+      "getPosition": "@@=coordinates",
+      "getRadius": 200,
+      "id": "4b5c8bbe-684d-45cc-91f7-8c9100ee515c",
+      "lineWidthMinPixels": 1,
+      "opacity": 0.4,
+      "pickable": true,
+      "radiusMaxPixels": 100,
+      "radiusMinPixels": 1,
+      "radiusScale": 6,
+      "stroked": true
+    }
+  ],
+  "mapProvider": "carto",
+  "mapStyle": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+  "views": [
+    {
+      "@@type": "MapView",
+      "controller": true
+    }
+  ]
+};
+    const tooltip = true;
+    const customLibraries = null;
+    const configuration = null;
+
+    const deckInstance = createDeck({
+                  container,
+      jsonInput,
+      tooltip,
+      customLibraries,
+      configuration
+    });
+
+  </script>
+</html>

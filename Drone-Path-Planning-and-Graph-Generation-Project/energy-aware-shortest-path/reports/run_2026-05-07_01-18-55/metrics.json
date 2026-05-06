@@ -1,0 +1,35 @@
+{
+  "Standard Dijkstra": {
+    "executionTimeMs": 0,
+    "expandedNodes": 64,
+    "totalEnergyCost": 31.42,
+    "totalDistance": 14,
+    "windPenalty": 12.600000000000001,
+    "altitudePenalty": 4.820000000000001,
+    "objectiveCost": 14,
+    "estimatedOperations": 1056.0,
+    "theoreticalComplexity": "O((V + E) log V)"
+  },
+  "Modified Dijkstra": {
+    "executionTimeMs": 0.29999999701976776,
+    "expandedNodes": 198,
+    "totalEnergyCost": 29.395000000000003,
+    "totalDistance": 14,
+    "windPenalty": 12.600000000000001,
+    "altitudePenalty": 2.795000000000001,
+    "objectiveCost": 29.395000000000003,
+    "estimatedOperations": 1056.0,
+    "theoreticalComplexity": "O((V + E) log V)"
+  },
+  "Time-Expanded DP (Bellman-Ford fallback)": {
+    "executionTimeMs": 0.20000000298023224,
+    "expandedNodes": 198,
+    "totalEnergyCost": 29.395000000000003,
+    "totalDistance": 14,
+    "windPenalty": 12.600000000000001,
+    "altitudePenalty": 2.795000000000001,
+    "objectiveCost": 29.395000000000003,
+    "estimatedOperations": 1056.0,
+    "theoreticalComplexity": "O((V + E) log V)"
+  }
+}

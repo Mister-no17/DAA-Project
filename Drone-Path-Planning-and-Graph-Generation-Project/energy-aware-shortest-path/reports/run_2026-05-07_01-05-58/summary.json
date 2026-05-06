@@ -1,0 +1,27 @@
+{
+  "scenarioName": "Scenario 3: Valley Detour",
+  "timestamp": "2026-05-06T19:35:57.755Z",
+  "environment": {
+    "windDirection": "W",
+    "windStrength": 1.5,
+    "altitudeFactor": 1.2,
+    "downhillFactor": 0.35,
+    "dynamicWindEnabled": true,
+    "windShiftStep": 6,
+    "windDirectionAfterShift": "S",
+    "windStrengthAfterShift": 2.3,
+    "maxStepMultiplier": 2.5
+  },
+  "grid": {
+    "rows": 8,
+    "cols": 8,
+    "vertices": 64,
+    "edges": 112
+  },
+  "obstacleCount": 0,
+  "activeAlgorithms": [
+    "Standard Dijkstra",
+    "Modified Dijkstra",
+    "Time-Expanded DP (Bellman-Ford fallback)"
+  ]
+}

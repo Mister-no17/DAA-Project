@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DAA Report - Energy-Aware Shortest Path</title>
+  <style>
+    :root {
+      --ink: #1b1f24;
+      --muted: #4a5563;
+      --line: #c7d0da;
+      --accent: #0f5870;
+      --paper: #ffffff;
+      --code-bg: #f6f8fb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    @page {
+      size: A4;
+      margin: 18mm 16mm;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Times New Roman", Times, serif;
+      background: #eef1f4;
+      color: var(--ink);
+      line-height: 1.45;
+    }
+
+    .page {
+      width: min(900px, 100%);
+      margin: 20px auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 32px 38px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0 0 8px;
+      font-weight: 700;
+      line-height: 1.2;
+      color: #0f2433;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin-bottom: 4px;
+    }
+
+    h2 {
+      font-size: 21px;
+      margin-top: 20px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 4px;
+    }
+
+    h3 {
+      font-size: 17px;
+      margin-top: 16px;
+    }
+
+    p,
+    li {
+      font-size: 15px;
+    }
+
+    .meta {
+      margin: 8px 0 14px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .equation {
+      margin: 10px 0;
+      padding: 8px 10px;
+      border-left: 3px solid var(--accent);
+      background: #f3f7fa;
+      font-style: italic;
+    }
+
+    ul,
+    ol {
+      margin: 8px 0 8px 22px;
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid #d8e0ea;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12.5px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      border: 1px solid var(--line);
+      padding: 6px 8px;
+      text-align: left;
+    }
+
+    th {
+      background: #f0f5f8;
+    }
+
+    .note {
+      margin-top: 18px;
+      font-size: 13px;
+      color: var(--muted);
+      border-top: 1px dashed var(--line);
+      padding-top: 8px;
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .page {
+        border: 0;
+        box-shadow: none;
+        margin: 0;
+        width: auto;
+        padding: 0;
+      }
+
+      .note {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <article class="page">
+    <h1>Energy-Aware Shortest Path Algorithm with Environmental Factors</h1>
+    <p class="meta">
+      DAA Course Mini-Project Report | Student: ____________________ | Roll No: ____________________
+    </p>
+
+    <h2>1. Problem Definition</h2>
+    <p>
+      Classical shortest path routing minimizes distance, but real navigation may require minimizing energy.
+      This project compares Standard Dijkstra with a Modified Dijkstra that includes environmental factors.
+    </p>
+    <div class="equation">cost = distance + wind_effect + altitude_cost</div>
+
+    <h2>2. Objective</h2>
+    <ol>
+      <li>Implement baseline Standard Dijkstra.</li>
+      <li>Implement Modified Dijkstra with environmental cost.</li>
+      <li>Add obstacle-aware routing (no-fly zones).</li>
+      <li>Add sudden wind-shift support (time-dependent costs).</li>
+      <li>Compare outputs visually and numerically.</li>
+    </ol>
+
+    <h2>3. Environment Model</h2>
+    <ul>
+      <li>2D grid graph; each cell is a node.</li>
+      <li>4-neighbor movement (up, down, left, right).</li>
+      <li>Wind direction and strength influence directional movement cost.</li>
+      <li>Altitude values per cell model climb and descent energy.</li>
+      <li>Blocked cells are treated as obstacles and removed from traversal.</li>
+    </ul>
+
+    <h3>3.1 Wind Effect</h3>
+    <div class="equation">wind_effect = wind_strength * (1 - dot(move_unit, wind_unit))</div>
+
+    <h3>3.2 Altitude Cost</h3>
+    <div class="equation">
+      climb = max(0, altitude_to - altitude_from), descent = max(0, altitude_from - altitude_to)<br />
+      altitude_cost = altitude_factor * (climb + downhill_factor * descent)
+    </div>
+
+    <h3>3.3 Dynamic Wind Shift</h3>
+    <div class="equation">
+      if step &lt; shift_step use (direction_before, strength_before), else use (direction_after, strength_after)
+    </div>
+
+    <h2>4. Algorithm Pseudocode</h2>
+
+    <h3>4.1 Standard Dijkstra</h3>
+    <pre>DIJKSTRA_DISTANCE(grid, start, goal):
+  initialize dist[v] = INF, parent[v] = NIL
+  dist[start] = 0
+  push (0, start) into min-priority queue
+
+  while queue not empty:
+    (d, u) = pop_min()
+    if d &gt; dist[u]: continue
+    if u == goal: break
+
+    for each neighbor v of u:
+      w = geometric_distance(u, v)
+      if dist[u] + w &lt; dist[v]:
+        dist[v] = dist[u] + w
+        parent[v] = u
+        push (dist[v], v)
+
+  return path, dist[goal]</pre>
+
+    <h3>4.2 Modified Dijkstra</h3>
+    <pre>DIJKSTRA_ENERGY(grid, altitude, start, goal, wind_direction, wind_strength, altitude_factor):
+  initialize dist[v] = INF, parent[v] = NIL
+  dist[start] = 0
+  push (0, start) into min-priority queue
+
+  while queue not empty:
+    (d, u) = pop_min()
+    if d &gt; dist[u]: continue
+    if u == goal: break
+
+    for each neighbor v of u:
+      distance = geometric_distance(u, v)
+      wind_effect = wind_strength * (1 - dot(move_unit(u, v), wind_unit(wind_direction)))
+      climb = max(0, altitude[v] - altitude[u])
+      descent = max(0, altitude[u] - altitude[v])
+      altitude_cost = altitude_factor * (climb + downhill_factor * descent)
+      w = distance + wind_effect + altitude_cost
+
+      if dist[u] + w &lt; dist[v]:
+        dist[v] = dist[u] + w
+        parent[v] = u
+        push (dist[v], v)
+
+  return path, dist[goal]</pre>
+
+    <h3>4.3 Time-Expanded State (Dynamic Wind Mode)</h3>
+    <pre>State is extended from node to (node, step).
+Edge cost is evaluated using wind profile active at that step.
+This supports sudden wind changes during traversal while preserving Dijkstra logic
+under non-negative weights.</pre>
+
+    <h2>5. Complexity Analysis</h2>
+    <p>
+      Let V be number of nodes and E be number of edges. For a 4-neighbor grid, E = O(V).
+      Using a binary heap:
+    </p>
+    <ul>
+      <li>Time: O((V + E) log V) = O(V log V)</li>
+      <li>Space: O(V)</li>
+    </ul>
+
+    <p>
+      In dynamic-wind mode, time-expanded search is used with horizon T:
+      Time = O((T*V + T*E) log(T*V)), Space = O(T*V).
+    </p>
+
+    <h2>6. Scenario Results</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th>Obstacles</th>
+          <th>Wind Mode</th>
+          <th>Paths Differ</th>
+          <th>Standard Distance</th>
+          <th>Standard Energy</th>
+          <th>Modified Distance</th>
+          <th>Modified Energy</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Ridge Escape</td>
+          <td>6</td>
+          <td>static (E)</td>
+          <td>Yes</td>
+          <td>14.000</td>
+          <td>37.740</td>
+          <td>14.000</td>
+          <td>23.700</td>
+        </tr>
+        <tr>
+          <td>Mountain Turn</td>
+          <td>6</td>
+          <td>dynamic step 5 (N -> E)</td>
+          <td>Yes</td>
+          <td>14.000</td>
+          <td>52.300</td>
+          <td>14.000</td>
+          <td>20.000</td>
+        </tr>
+        <tr>
+          <td>Valley Detour</td>
+          <td>6</td>
+          <td>dynamic step 6 (W -> S)</td>
+          <td>Yes</td>
+          <td>14.000</td>
+          <td>53.680</td>
+          <td>14.000</td>
+          <td>17.920</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>7. Conclusion</h2>
+    <p>
+      The modified Dijkstra keeps the same asymptotic efficiency as baseline Dijkstra but improves path realism
+      by including environment-aware movement cost. In all tested scenarios, modified routing reduced energy
+      cost while retaining feasible path lengths.
+    </p>
+
+    <h2>8. Reproduction</h2>
+    <ul>
+      <li>Run interactive UI: python -m http.server 8000, then open http://localhost:8000</li>
+      <li>Run scenario console test: node scenario_runner.mjs</li>
+    </ul>
+
+    <p class="note">
+      Export to PDF: open this file in a browser and use Print (Ctrl+P), then choose Save as PDF.
+    </p>
+  </article>
+</body>
+</html>
