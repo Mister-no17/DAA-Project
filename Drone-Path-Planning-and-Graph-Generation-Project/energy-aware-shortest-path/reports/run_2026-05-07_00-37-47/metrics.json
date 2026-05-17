@@ -1,0 +1,35 @@
+{
+  "Standard Dijkstra": {
+    "executionTimeMs": 0.4000000059604645,
+    "expandedNodes": 64,
+    "totalEnergyCost": 83.35,
+    "totalDistance": 14,
+    "windPenalty": 35,
+    "altitudePenalty": 34.349999999999994,
+    "objectiveCost": 14,
+    "estimatedOperations": 1056.0,
+    "theoreticalComplexity": "O((V + E) log V)"
+  },
+  "Modified Dijkstra": {
+    "executionTimeMs": 0.5,
+    "expandedNodes": 62,
+    "totalEnergyCost": 79.3,
+    "totalDistance": 14,
+    "windPenalty": 35,
+    "altitudePenalty": 30.299999999999997,
+    "objectiveCost": 79.3,
+    "estimatedOperations": 1056.0,
+    "theoreticalComplexity": "O((V + E) log V)"
+  },
+  "Bellman-Ford (DP)": {
+    "executionTimeMs": 2.7000000029802322,
+    "expandedNodes": 66,
+    "totalEnergyCost": 79.3,
+    "totalDistance": 14,
+    "windPenalty": 35,
+    "altitudePenalty": 30.299999999999997,
+    "objectiveCost": 79.3,
+    "estimatedOperations": 7168,
+    "theoreticalComplexity": "O(VE)"
+  }
+}

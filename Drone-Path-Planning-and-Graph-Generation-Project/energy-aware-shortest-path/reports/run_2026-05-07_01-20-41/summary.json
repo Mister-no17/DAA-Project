@@ -1,0 +1,27 @@
+{
+  "scenarioName": "Scenario 2: Mountain Turn",
+  "timestamp": "2026-05-06T19:50:40.969Z",
+  "environment": {
+    "windDirection": "N",
+    "windStrength": 2.6,
+    "altitudeFactor": 2.8,
+    "downhillFactor": 0.35,
+    "dynamicWindEnabled": true,
+    "windShiftStep": 25,
+    "windDirectionAfterShift": "SE",
+    "windStrengthAfterShift": 2.5,
+    "maxStepMultiplier": 2.5
+  },
+  "grid": {
+    "rows": 8,
+    "cols": 8,
+    "vertices": 64,
+    "edges": 112
+  },
+  "obstacleCount": 0,
+  "activeAlgorithms": [
+    "Standard Dijkstra",
+    "Modified Dijkstra",
+    "Time-Expanded DP (Bellman-Ford fallback)"
+  ]
+}
