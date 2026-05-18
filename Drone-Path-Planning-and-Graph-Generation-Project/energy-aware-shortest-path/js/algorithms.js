@@ -1,5 +1,5 @@
 import { MinPriorityQueue } from "./priorityQueue.js";
-import { computeEnergyComponents } from "./energy/totalEnergy.js";
+import { computeEnergyComponents, computeNormalizationBounds } from "./energy/totalEnergy.js";
 import {
   energyAStarGrid,
   energyAStarGridTimeAware,
@@ -31,6 +31,10 @@ export const DEFAULT_ENVIRONMENT = Object.freeze({
   averageEnergyFactor: 1.0,
   windCoefficient: 1.0,
   turningCoefficient: 0.22,
+  windLowerBoundPerStep: 0,
+  turnLowerBoundPerStep: 0,
+  replanStrengthThreshold: 0.4,
+  replanDirectionThreshold: Math.PI / 4,
   mass: 1.0,
   gravity: 9.81,
   altitudeFactor: 1.0,
@@ -138,6 +142,15 @@ function normalizeEnergyEnvironment(environment) {
     turningCoefficient: normalized.turningCoefficient ?? 0.0,
     mass: normalized.mass ?? normalized.altitudeFactor ?? 1.0,
     gravity: normalized.gravity ?? 9.81,
+    // Normalized objective weights (defaults chosen for balanced research-oriented weighting).
+    // These weights are applied to normalized component terms so the optimization operates
+    // on comparable scales and remains tunable per-experiment.
+    weights: {
+      wd: (normalized.weights && normalized.weights.wd) ?? 0.25, // distance
+      wg: (normalized.weights && normalized.weights.wg) ?? 0.35, // gravity
+      ww: (normalized.weights && normalized.weights.ww) ?? 0.25, // wind
+      wt: (normalized.weights && normalized.weights.wt) ?? 0.15, // turning
+    },
   };
 }
 
@@ -187,6 +200,43 @@ export function computeEnergyEdgeCostAtStep(from, to, altitudeGrid, environment,
   });
 
   return components.totalEnergy;
+}
+
+export function computeEnergyHeuristic(current, goal, environment, altitudeGrid, step = 0) {
+  const energyEnv = normalizeEnergyEnvironment(environment);
+  const distance = Math.hypot(goal[0] - current[0], goal[1] - current[1]);
+  // Admissible lower bound: straight-line distance is a lower bound on any grid path length.
+  const distanceLowerBound = (energyEnv.distanceCoefficient ?? 1) * distance;
+
+  const altitudeFrom = altitudeGrid?.[current[0]]?.[current[1]];
+  const altitudeTo = altitudeGrid?.[goal[0]]?.[goal[1]];
+  const altitudeGain = Number.isFinite(altitudeFrom) && Number.isFinite(altitudeTo)
+    ? Math.max(0, altitudeTo - altitudeFrom)
+    : 0;
+
+  // Admissible lower bound: only unavoidable uphill gain is counted; downhill is ignored.
+  const gravityLowerBound = (energyEnv.mass ?? 1) * (energyEnv.gravity ?? 9.81) * altitudeGain;
+
+  // Admissible lower bound: assume perfect tailwind and no turns.
+  // Wind and turning energy are always >= 0 in this model, so the optimistic minimum is 0.
+  // Optional per-step lower bounds may be supplied if they are guaranteed non-negative minima.
+  const minSteps = Math.max(0, Math.ceil(distance));
+  const windLowerBound = Math.max(0, energyEnv.windLowerBoundPerStep ?? 0) * minSteps;
+  const turningLowerBound = Math.max(0, energyEnv.turnLowerBoundPerStep ?? 0) * minSteps;
+
+  // Normalize lower bounds using the same bounds/weights as edge evaluation so heuristic is
+  // admissible in the normalized weighted objective space used by the search.
+  const bounds = computeNormalizationBounds(altitudeGrid, energyEnv);
+  const weights = (energyEnv && energyEnv.weights) || { wd: 0.25, wg: 0.35, ww: 0.25, wt: 0.15 };
+
+  const D_norm = distanceLowerBound / bounds.D_max;
+  const G_norm = gravityLowerBound / bounds.G_max;
+  const W_norm = windLowerBound / bounds.W_max;
+  const T_norm = turningLowerBound / bounds.T_max;
+
+  const heuristic = (weights.wd ?? 0) * D_norm + (weights.wg ?? 0) * G_norm + (weights.ww ?? 0) * W_norm + (weights.wt ?? 0) * T_norm;
+
+  return heuristic;
 }
 
 export function dijkstraGrid({ rows, cols, start, end, weightFn, blockedSet }) {
@@ -546,7 +596,7 @@ export function evaluatePathMetrics(path, altitudeGrid, environment) {
     windEnergy += components.windEnergy;
     gravityEnergy += components.gravityEnergy;
     turningEnergy += components.turningEnergy;
-    energyCost += components.totalEnergy;
+    energyCost += components.totalPhysicalEnergy;
 
     if (prev) {
       const angle = components.turningAngle ?? 0;
@@ -605,7 +655,7 @@ export function evaluatePathTimeline(path, altitudeGrid, environment) {
       directionVectors: DIRECTION_VECTORS,
     });
 
-    const energyValue = components.totalEnergy;
+    const energyValue = components.totalPhysicalEnergy;
     const signature = `${windState.direction}|${windState.strength.toFixed(3)}|${windState.hasGust ? 1 : 0}`;
 
     if (previousSignature !== null && signature !== previousSignature) {
@@ -740,6 +790,46 @@ function finalizeDynamicResult(baseResult, model, metrics, timeline, planningTim
   };
 }
 
+function directionAngleBetween(fromDirection, toDirection) {
+  const fromVector = DIRECTION_VECTORS[fromDirection] ?? DIRECTION_VECTORS.E;
+  const toVector = DIRECTION_VECTORS[toDirection] ?? DIRECTION_VECTORS.E;
+  const fromNorm = Math.hypot(fromVector[0], fromVector[1]) || 1;
+  const toNorm = Math.hypot(toVector[0], toVector[1]) || 1;
+  const dot = (fromVector[0] * toVector[0] + fromVector[1] * toVector[1]) / (fromNorm * toNorm);
+  const clamped = Math.max(-1, Math.min(1, dot));
+  return Math.acos(clamped);
+}
+
+function shouldReplanForWindChange(currentState, nextState, environment) {
+  if (!currentState || !nextState) {
+    return true;
+  }
+
+  if (nextState.hasGust) {
+    return true;
+  }
+
+  const strengthDelta = Math.abs((nextState.strength ?? 0) - (currentState.strength ?? 0));
+  const directionDelta = directionAngleBetween(currentState.direction, nextState.direction);
+  const strengthThreshold = Math.max(0, environment.replanStrengthThreshold ?? 0.4);
+  const directionThreshold = Math.max(0, environment.replanDirectionThreshold ?? Math.PI / 4);
+
+  return strengthDelta >= strengthThreshold || directionDelta >= directionThreshold;
+}
+
+/**
+ * computeDynamicHorizon
+ * Conservative horizon calculation used by the adaptive dynamic planner to
+ * determine how many steps to simulate in the wind timeline. Kept here so the
+ * planning subsystem is self-contained and does not rely on frontend module
+ * exports.
+ */
+function computeDynamicHorizon(rows, cols, environment) {
+  const maxStepMultiplier = (environment && environment.maxStepMultiplier) || 2.5;
+  // Ensure horizon grows with grid size while being bounded by a multiplier.
+  return Math.max(rows + cols, Math.floor(rows * cols * maxStepMultiplier));
+}
+
 function runAdaptiveDynamicPlanner(model, planner, algorithmName, optimizedForLabel) {
   const rows = model.altitudeGrid.length;
   const cols = model.altitudeGrid[0].length;
@@ -753,6 +843,7 @@ function runAdaptiveDynamicPlanner(model, planner, algorithmName, optimizedForLa
   let currentStart = model.start;
   let currentStep = 0;
   let nextPlannedResidual = null;
+  let lastPlannedWindState = null;
   let replanCount = 0;
   let environmentShiftCount = 0;
   let routeStabilityTotal = 0;
@@ -770,10 +861,26 @@ function runAdaptiveDynamicPlanner(model, planner, algorithmName, optimizedForLa
       blockedSet,
     };
 
-    const segmentStartTime = performance.now();
-    const segmentResult = planner(segmentModel);
-    const segmentEndTime = performance.now();
-    const segmentPlanningTimeMs = segmentEndTime - segmentStartTime;
+    let segmentResult;
+    let segmentPlanningTimeMs = 0;
+
+    if (nextPlannedResidual && lastPlannedWindState &&
+      !shouldReplanForWindChange(lastPlannedWindState, windState, environment)) {
+      segmentResult = {
+        path: nextPlannedResidual,
+        expandedNodes: 0,
+        uniqueVisitedNodes: 0,
+        relaxationOperations: 0,
+        heuristicEvaluations: 0,
+      };
+    } else {
+      const segmentStartTime = performance.now();
+      segmentResult = planner(segmentModel);
+      const segmentEndTime = performance.now();
+      segmentPlanningTimeMs = segmentEndTime - segmentStartTime;
+      lastPlannedWindState = windState;
+      nextPlannedResidual = null;
+    }
     totalPlanningTimeMs += segmentPlanningTimeMs;
 
     if (segments.length === 0) {
@@ -870,13 +977,19 @@ function runAdaptiveDynamicPlanner(model, planner, algorithmName, optimizedForLa
     currentStart = executedPath[executedPath.length - 1];
     currentStep += executedSteps;
 
+    if (Number.isFinite(nextActiveStep) && currentStep >= nextActiveStep) {
+      environmentShiftCount += 1;
+    }
+
     if (sameCoord(currentStart, model.end) || executedSteps >= segmentResult.path.length - 1) {
       break;
     }
 
     nextPlannedResidual = segmentResult.path.slice(Math.max(0, executedSteps));
-    replanCount += 1;
-    environmentShiftCount += 1;
+
+    if (shouldReplanForWindChange(windState, getWindStateAtStep(currentStep, environment), environment)) {
+      replanCount += 1;
+    }
 
     if (currentStep >= horizon) {
       break;
@@ -998,9 +1111,8 @@ export function runEnergyAwareAStar(model) {
   const startTime = performance.now();
   const blockedSet = model.blockedSet ?? new Set();
 
-  const heuristicBase = model.environment.averageEnergyFactor ?? model.environment.distanceCoefficient ?? 1.0;
-  const energyCoefficient = Math.max(0, heuristicBase);
-  const heuristicFn = (coord) => energyCoefficient * geometricDistance(coord, model.end);
+  const heuristicFn = (coord, step = 0) =>
+    computeEnergyHeuristic(coord, model.end, model.environment, model.altitudeGrid, step);
 
   const dynamicMode = model.environment.dynamicWindEnabled;
 
@@ -1092,9 +1204,8 @@ export function runEnergyAwareThetaStar(model) {
   const startTime = performance.now();
   const blockedSet = model.blockedSet ?? new Set();
 
-  const heuristicBase = model.environment.averageEnergyFactor ?? model.environment.distanceCoefficient ?? 1.0;
-  const energyCoefficient = Math.max(0, heuristicBase);
-  const heuristicFn = (coord) => energyCoefficient * geometricDistance(coord, model.end);
+  const heuristicFn = (coord, step = 0) =>
+    computeEnergyHeuristic(coord, model.end, model.environment, model.altitudeGrid, step);
 
   const dynamicMode = model.environment.dynamicWindEnabled;
   const optimizedFor = dynamicMode
@@ -1124,11 +1235,13 @@ export function runEnergyAwareThetaStar(model) {
   const metricPath = searchResult.path;
   const metrics = evaluatePathMetrics(metricPath, model.altitudeGrid, model.environment);
   const theory = {
-    recurrenceRelation: "No standard divide-and-conquer recurrence. Theta* extends A* using line-of-sight relaxation.",
-    recurrenceApplicability: "Theta* is analyzed similarly to A* with additional LOS checks.",
+    recurrenceRelation:
+      "No standard divide-and-conquer recurrence. Theta* extends A* using line-of-sight relaxation and any-angle parent propagation.",
+    recurrenceApplicability:
+      "Theta* combines heuristic graph search with LOS traversal and dynamic parent relaxation for smoother any-angle routing. Heuristic guidance reduces unnecessary exploration, LOS-based shortcutting shortens paths, dynamic parent propagation smooths heading changes, and the algorithm preserves feasibility by validating each candidate line segment.",
     bestCaseComplexity: "O((V + E) log V)",
-    averageCaseComplexity: "O((V + E) log V)",
-    worstCaseComplexity: "O((V + E) log V)",
+    averageCaseComplexity: "O((V + E) log V + LOS_checks)",
+    worstCaseComplexity: "O((V + E) log V + LOS_checks)",
   };
 
   return {
@@ -1157,6 +1270,8 @@ export function runEnergyAwareThetaStar(model) {
     uniqueVisitedNodes: searchResult.uniqueVisitedNodes ?? searchResult.expandedNodes,
     relaxationOperations: searchResult.relaxationOperations ?? 0,
     heuristicEvaluations: searchResult.heuristicEvaluations ?? 0,
+    losChecks: searchResult.losChecks ?? 0,
+    losSuccess: searchResult.losSuccess ?? 0,
     executionTimeMs,
     runtimeMs: executionTimeMs,
     avgBenchmarkTime: model.averageBenchmarkTime ?? null,

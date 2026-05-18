@@ -86,6 +86,7 @@ Practical note: time-expanded search blows up quickly with horizon H; choose H c
 
 5) Cost contributed by weight function
 - `weightFn(from,to)` calls `geometricDistance` (O(1)) for baseline, or `computeEnergyEdgeCost`/`computeEnergyEdgeCostAtStep` (O(1)) for modified search. So edge weight evaluation is constant-time and doesn't change asymptotic complexity.
+- `computeEnergyHeuristic` is O(1) and does not change worst-case time; in practice it reduces node expansions.
 
 ---
 
@@ -99,6 +100,17 @@ Practical note: time-expanded search blows up quickly with horizon H; choose H c
 - Modified (dynamic wind — time-expanded):
   - Time: O(V H log(V H))
   - Space: O(V H)
+- Energy-Aware Theta* (any-angle):
+  - Time: O((V + E) log V + L_total) where LOS checks are added to standard A*-style expansion.
+  - Space: O(V)
+
+  Notes:
+  - Theta* behaves like A* with additional line-of-sight shortcutting and parent relaxation.
+  - Heuristic guidance still reduces exploration, but each candidate parent connection requires a Bresenham LOS validation.
+  - LOS traversal is O(k) per check, where k is the number of grid cells traversed.
+  - Obstacle density influences runtime: dense blocked regions increase failed LOS attempts and local expansions.
+
+Here L_total is the total number of Bresenham steps performed across all LOS checks.
 
 Real-world recommendation: if dynamic wind is enabled, keep H = small constant × (r + c) or otherwise bounded to limit complexity.
 
@@ -113,7 +125,7 @@ Real-world recommendation: if dynamic wind is enabled, keep H = small constant �
 
 8) Final notes and trade-offs
 - Asymptotic worst-case does not change by adding wind/altitude: the algorithm class remains Dijkstra on nonnegative weights.
-- The dominant cost is heap operations (log factor). To accelerate further consider specialized integer-key radix heaps when weights are small integers, or A* with an admissible heuristic (e.g., Euclidean distance) to reduce expansions when acceptable.
+- The dominant cost is heap operations (log factor). To accelerate further consider specialized integer-key radix heaps when weights are small integers, or A* with an admissible heuristic to reduce expansions when acceptable.
 
 ---
 

@@ -4,7 +4,7 @@ A complete DAA mini-project that compares:
 
 1. Standard Dijkstra (distance-only optimization)
 2. Energy-Aware A* (heuristic energy optimization)
-3. Energy-Aware Theta* (placeholder only)
+3. Energy-Aware Theta* (any-angle energy optimization)
 
 The energy-aware version uses this modular energy model:
 
@@ -52,7 +52,9 @@ Additional advanced behavior:
 
 1. Obstacle-aware routing: blocked cells are removed from graph traversal.
 2. Sudden wind-shift mode: wind direction/strength can switch after a given step count.
-3. Time-expanded Dijkstra is used in dynamic mode so edge cost can depend on traversal time.
+3. Multi-phase wind shifts: scenarios can define multiple wind phases and localized gust regions.
+4. Time-expanded search is used in dynamic mode so edge cost can depend on traversal time.
+5. Adaptive replanning reuses existing plans unless wind changes exceed thresholds.
 
 ### Cost Components
 
@@ -67,7 +69,7 @@ Additional advanced behavior:
 - Tailwind gives lower penalty, headwind gives higher penalty.
 
 4. Turning energy:
-- E_turn = k_t * turning_angle
+- E_turn = k_t * turning_angle^2
 
 4. Obstacle constraint:
 - blocked nodes are treated as non-traversable (effectively infinite cost).
@@ -87,6 +89,12 @@ The same Dijkstra framework is retained, but edge weight is changed.
 
 - Objective: minimize minimum-energy trajectory cost
 - Weight(u, v) = E_distance + E_gravity + E_wind + E_turn
+- Heuristic: admissible lower bound on remaining energy (see Theory section)
+
+Dynamic mode notes:
+
+- Edge cost depends on (node, step) via the wind timeline.
+- The heuristic is evaluated per step and remains admissible by using only lower bounds.
 
 Advanced mode:
 
@@ -180,6 +188,53 @@ For dynamic wind mode (time-expanded Dijkstra):
 1. Let T be the maximum step horizon.
 2. Time complexity becomes O((T*V + T*E) log(T*V)).
 3. Space complexity becomes O(T*V).
+
+## Theory and Guarantees (concise)
+
+### Admissible energy-aware heuristic
+
+We use a lower-bound energy heuristic:
+
+E_lb(n) = k_d * dist(n, goal) + m * g * max(0, h(goal) - h(n))
+
+Wind and turning terms are lower-bounded by 0, which is optimistic because the model never assigns negative energy.
+This ensures h(n) never overestimates the true remaining energy.
+
+Optional per-step lower bounds (wind/turn) can be supplied only if they are guaranteed minima. By default, these are 0.
+
+### Consistency (monotonicity)
+
+Consistency holds if the per-step cost lower-bounds the change in the heuristic:
+
+h(n) <= c(n, n') + h(n')
+
+With non-negative costs and the straight-line distance lower bound, consistency typically holds, but it can be violated if
+energy coefficients are misconfigured (for example, if the heuristic is scaled above true minimal per-step energy).
+
+### Theta* energy reduction
+
+Theta* uses LOS shortcuts to reduce heading changes and zig-zagging. With a quadratic turn penalty
+(E_turn = k_t * theta^2), smoother paths reduce total yaw/stabilization effort. Any-angle trajectories therefore
+tend to lower cumulative turning energy compared to grid-constrained paths.
+
+Theta* is not analyzed with a classic divide-and-conquer recurrence. It extends A* by relaxing parent links through
+line-of-sight checks and propagating any-angle parents, producing smoother, more direct routes while maintaining
+heuristic-guided search behavior.
+
+Worst-case complexity is O((V + E) log V + L_total), where L_total accounts for Bresenham LOS traversal across all
+visibility checks. Obstacle density affects runtime by increasing failed LOS attempts and local expansions.
+
+### Dynamic routing and replanning
+
+When dynamic wind is enabled, the system plans on time-expanded states (node, step). Adaptive replanning is triggered
+only when wind changes exceed strength/direction thresholds or gusts are active; otherwise the residual plan is reused.
+This simulates incremental adaptation without a full recomputation at every step.
+
+### Correctness and assumptions
+
+- All edge costs are non-negative.
+- Heuristic is admissible by construction (optimistic wind and turning terms).
+- Theta* LOS uses Bresenham on the grid; LOS energy is integrated along the discrete LOS trace.
 
 ## Trade-offs and Edge Cases
 

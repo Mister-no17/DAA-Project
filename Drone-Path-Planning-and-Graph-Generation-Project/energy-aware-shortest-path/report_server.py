@@ -82,6 +82,8 @@ def compute_edge_components(
     wind_shift_step = int(environment.get("windShiftStep", 0) or 0)
     wind_direction_after = environment.get("windDirectionAfterShift", wind_direction)
     wind_strength_after = float(environment.get("windStrengthAfterShift", wind_strength))
+    wind_shifts = environment.get("windShifts", []) if isinstance(environment.get("windShifts", []), list) else []
+    gust_regions = environment.get("gustRegions", []) if isinstance(environment.get("gustRegions", []), list) else []
     distance_coefficient = float(environment.get("distanceCoefficient", 1.0))
     wind_coefficient = float(environment.get("windCoefficient", 1.0))
     turning_coefficient = float(environment.get("turningCoefficient", 0.0))
@@ -102,15 +104,59 @@ def compute_edge_components(
         clamped = max(-1.0, min(1.0, dot))
         return math.acos(clamped)
 
+    def resolve_wind_state(step_index: int, from_node: List[int], to_node: List[int]) -> Tuple[str, float]:
+        active_direction = wind_direction
+        active_strength = wind_strength
+
+        if wind_shifts:
+            ordered = sorted(wind_shifts, key=lambda event: int(event.get("step", 0)))
+            for shift in ordered:
+                shift_step = int(shift.get("step", 0) or 0)
+                transition = int(shift.get("transitionSteps", 0) or 0)
+                transition_start = max(0, shift_step - transition)
+
+                if transition > 0 and transition_start <= step_index < shift_step:
+                    progress = (step_index - transition_start + 1) / transition
+                    progress = max(0.0, min(1.0, progress))
+                    target_strength = float(shift.get("strength", active_strength))
+                    active_strength = active_strength + (target_strength - active_strength) * progress
+                    active_direction = shift.get("direction", active_direction)
+                    break
+
+                if step_index >= shift_step:
+                    active_direction = shift.get("direction", active_direction)
+                    active_strength = float(shift.get("strength", active_strength))
+                else:
+                    break
+        elif dynamic_wind and step_index >= wind_shift_step:
+            active_direction = wind_direction_after
+            active_strength = wind_strength_after
+
+        for gust in gust_regions:
+            start_step = int(gust.get("startStep", 0) or 0)
+            end_step = int(gust.get("endStep", start_step) or start_step)
+            if step_index < start_step or step_index > end_step:
+                continue
+            rows = gust.get("rows", [0, -1])
+            cols = gust.get("cols", [0, -1])
+            row_min, row_max = int(rows[0]), int(rows[1])
+            col_min, col_max = int(cols[0]), int(cols[1])
+            if not (row_min <= from_node[0] <= row_max and col_min <= from_node[1] <= col_max) and not (
+                row_min <= to_node[0] <= row_max and col_min <= to_node[1] <= col_max
+            ):
+                continue
+            if gust.get("direction"):
+                active_direction = gust.get("direction")
+            strength_multiplier = float(gust.get("strengthMultiplier", 1.0))
+            strength_offset = float(gust.get("strengthOffset", 0.0))
+            active_strength = max(0.0, active_strength * strength_multiplier + strength_offset)
+
+        return active_direction, active_strength
+
     for idx in range(len(path) - 1):
         from_node = path[idx]
         to_node = path[idx + 1]
-        if dynamic_wind and idx >= wind_shift_step:
-            active_direction = wind_direction_after
-            active_strength = wind_strength_after
-        else:
-            active_direction = wind_direction
-            active_strength = wind_strength
+        active_direction, active_strength = resolve_wind_state(idx, from_node, to_node)
 
         wind_vector = DIRECTION_VECTORS.get(active_direction, DIRECTION_VECTORS["E"])
 
@@ -140,7 +186,8 @@ def compute_edge_components(
             turn_angle = turning_angle(prev_vec, next_vec)
         else:
             turn_angle = 0.0
-        turning_cost = turning_coefficient * turn_angle
+        # Quadratic turn penalty mirrors curvature-based yaw effort used in the solver.
+        turning_cost = turning_coefficient * (turn_angle * turn_angle)
 
         distance_total += distance_coefficient * distance
         wind_total += wind_effect
@@ -343,6 +390,106 @@ def plot_edge_cost_breakdown(components: Dict[str, Dict[str, float]], output_pat
     plt.close(fig)
 
 
+def plot_runtime_comparison(metrics: Dict[str, Dict[str, float]], output_path: Path) -> None:
+    names = list(metrics.keys())
+    runtimes = [metrics[name]["executionTimeMs"] for name in names]
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    bars = ax.bar(names, runtimes, color=["#f08c00", "#0d8cb6", "#7a4ae0"])
+    ax.set_title("Runtime Comparison (ms)")
+    ax.set_ylabel("Milliseconds")
+    ax.bar_label(bars, fmt="%.2f")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
+def plot_curvature_metrics(metrics: Dict[str, Dict[str, float]], output_path: Path) -> None:
+    names = list(metrics.keys())
+    turning_energy = [metrics[name]["turningEnergy"] for name in names]
+    turning_count = [metrics[name]["turningCount"] for name in names]
+    heading_change = [metrics[name]["averageHeadingChange"] for name in names]
+
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    x = np.arange(len(names))
+    ax.bar(x - 0.25, turning_energy, width=0.25, label="Turning energy", color="#2f8f6b")
+    ax.bar(x, turning_count, width=0.25, label="Turn count", color="#4fb0d1")
+    ax.bar(x + 0.25, heading_change, width=0.25, label="Avg heading change (rad)", color="#7a4ae0")
+    ax.set_xticks(x)
+    ax.set_xticklabels(names)
+    ax.set_title("Curvature & Turning Metrics")
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
+def plot_replanning_timeline(dynamic_env: Dict[str, object], output_path: Path) -> None:
+    timeline = dynamic_env.get("timeline", []) if isinstance(dynamic_env, dict) else []
+    change_steps = set(dynamic_env.get("changeSteps", []) if isinstance(dynamic_env, dict) else [])
+
+    if not timeline:
+        return
+
+    steps = [state.get("step", 0) for state in timeline]
+    strengths = [state.get("strength", 0.0) for state in timeline]
+
+    fig, ax = plt.subplots(figsize=(9, 3.8))
+    ax.plot(steps, strengths, color="#0d8cb6", linewidth=2.0, label="Wind strength")
+
+    for step in change_steps:
+        ax.axvline(step, color="#f08c00", linestyle="--", linewidth=1.2, alpha=0.8)
+
+    ax.set_title("Dynamic Wind Timeline")
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Wind Strength")
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
+def plot_wind_field(environment: Dict[str, object], altitude_grid: List[List[float]], output_path: Path) -> None:
+    rows = len(altitude_grid) if altitude_grid else 8
+    cols = len(altitude_grid[0]) if altitude_grid else 8
+    base_direction = environment.get("windDirection", "E") if isinstance(environment, dict) else "E"
+    base_strength = float(environment.get("windStrength", 1.0)) if isinstance(environment, dict) else 1.0
+
+    vector = DIRECTION_VECTORS.get(base_direction, DIRECTION_VECTORS["E"])
+    u = np.full((rows, cols), vector[1])
+    v = np.full((rows, cols), -vector[0])
+
+    fig, ax = plt.subplots(figsize=(6.5, 6.5))
+    ax.quiver(u, v, angles="xy", scale_units="xy", scale=1.8 / max(base_strength, 0.4), color="#0d8cb6")
+    ax.set_title("Wind Vector Field (Base)")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
+def plot_route_heatmap(paths: Dict[str, List[List[int]]], altitude_grid: List[List[float]], output_path: Path) -> None:
+    if not altitude_grid:
+        return
+
+    rows = len(altitude_grid)
+    cols = len(altitude_grid[0])
+    heat = np.zeros((rows, cols), dtype=float)
+
+    for path in paths.values():
+        for row, col in path:
+            heat[row, col] += 1
+
+    fig, ax = plt.subplots(figsize=(6.5, 5.5))
+    im = ax.imshow(heat, cmap="magma")
+    ax.set_title("Route Density Heatmap")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
 def build_metrics_payload(algorithms: List[Dict[str, float]], vertices: int, edges: int) -> Dict[str, Dict[str, float]]:
     def safe_float(value: object) -> float:
         try:
@@ -367,6 +514,13 @@ def build_metrics_payload(algorithms: List[Dict[str, float]], vertices: int, edg
             "averageHeadingChange": safe_float(entry.get("averageHeadingChange")),
             "smoothnessScore": safe_float(entry.get("smoothnessScore")),
             "heuristicEvaluations": safe_float(entry.get("heuristicEvaluations")),
+            "losChecks": safe_float(entry.get("losChecks")),
+            "losSuccess": safe_float(entry.get("losSuccess")),
+            "replanCount": safe_float(entry.get("replanCount")),
+            "environmentShiftCount": safe_float(entry.get("environmentShiftCount")),
+            "routeStability": safe_float(entry.get("routeStability")),
+            "energyFluctuation": safe_float(entry.get("energyFluctuation")),
+            "adaptationOverheadMs": safe_float(entry.get("adaptationOverheadMs")),
             "objectiveCost": safe_float(entry.get("objectiveCost")),
             "estimatedOperations": estimate_ops(name, vertices, edges),
             "theoreticalComplexity": "N/A" if is_placeholder else "O((V + E) log V)",
@@ -428,6 +582,7 @@ def handle_report(payload: Dict[str, object]) -> Dict[str, str]:
 
     component_totals = {}
     environment = payload.get("environment", {})
+    dynamic_environment = payload.get("dynamicEnvironment", {})
     for name, path in path_map.items():
         component_totals[name] = compute_edge_components(path, grid, environment)
 
@@ -436,6 +591,11 @@ def handle_report(payload: Dict[str, object]) -> Dict[str, str]:
     plot_altitude_profile(path_map, grid, run_dir / "altitude_profile.png")
     plot_3d_route_visualization(path_map, grid, blocked, run_dir / "3d_route_visualization.png")
     plot_edge_cost_breakdown(component_totals, run_dir / "edge_cost_breakdown.png")
+    plot_runtime_comparison(metrics, run_dir / "runtime_comparison.png")
+    plot_curvature_metrics(metrics, run_dir / "curvature_metrics.png")
+    plot_replanning_timeline(dynamic_environment, run_dir / "replanning_timeline.png")
+    plot_wind_field(environment, grid, run_dir / "wind_vector_field.png")
+    plot_route_heatmap(path_map, grid, run_dir / "route_heatmap.png")
 
     return {"folder": str(run_dir)}
 

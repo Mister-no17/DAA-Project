@@ -44,51 +44,132 @@ function isBlockedCell(row, col, blockedSet) {
 
 function bresenhamLine(from, to) {
   const points = [];
-  let x0 = from[0];
-  let y0 = from[1];
+  const x0 = from[0];
+  const y0 = from[1];
   const x1 = to[0];
   const y1 = to[1];
-  const dx = Math.abs(x1 - x0);
-  const dy = Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1;
-  const sy = y0 < y1 ? 1 : -1;
-  let err = dx - dy;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const sx = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  const sy = dy > 0 ? 1 : dy < 0 ? -1 : 0;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
 
-  while (true) {
-    points.push([x0, y0]);
+  let x = x0;
+  let y = y0;
+  let ix = 0;
+  let iy = 0;
 
-    if (x0 === x1 && y0 === y1) {
-      break;
+  points.push([x, y]);
+
+  while (ix < absDx || iy < absDy) {
+    const stepX = (0.5 + ix) * absDy;
+    const stepY = (0.5 + iy) * absDx;
+
+    if (stepX < stepY) {
+      x += sx;
+      ix += 1;
+    } else if (stepY < stepX) {
+      y += sy;
+      iy += 1;
+    } else {
+      x += sx;
+      y += sy;
+      ix += 1;
+      iy += 1;
     }
 
-    const e2 = 2 * err;
-    if (e2 > -dy) {
-      err -= dy;
-      x0 += sx;
-    }
-    if (e2 < dx) {
-      err += dx;
-      y0 += sy;
-    }
+    points.push([x, y]);
   }
 
   return points;
 }
 
-export function lineOfSight(from, to, rows, cols, blockedSet) {
+export function lineOfSight(from, to, rows, cols, blockedSet, { debug = false, trace = null } = {}) {
   const points = bresenhamLine(from, to);
+  let previousPoint = null;
 
   for (const [row, col] of points) {
     if (!inBounds(row, col, rows, cols)) {
+      if (debug && trace) {
+        trace.push({ type: "outOfBounds", point: [row, col] });
+      }
       return false;
     }
 
     if (isBlockedCell(row, col, blockedSet)) {
+      if (debug && trace) {
+        trace.push({ type: "blockedCell", point: [row, col] });
+      }
       return false;
     }
+
+    if (previousPoint) {
+      const dr = row - previousPoint[0];
+      const dc = col - previousPoint[1];
+      const isDiagonal = Math.abs(dr) === 1 && Math.abs(dc) === 1;
+      if (isDiagonal) {
+        const cornerA = [previousPoint[0], col];
+        const cornerB = [row, previousPoint[1]];
+        const cornerABlocked = isBlockedCell(cornerA[0], cornerA[1], blockedSet);
+        const cornerBBlocked = isBlockedCell(cornerB[0], cornerB[1], blockedSet);
+
+        if (cornerABlocked || cornerBBlocked) {
+          if (debug && trace) {
+            trace.push({
+              type: "cornerClip",
+              from: previousPoint,
+              to: [row, col],
+              cornerA,
+              cornerB,
+              cornerABlocked,
+              cornerBBlocked,
+            });
+          }
+          return false;
+        }
+      }
+    }
+
+    if (debug && trace) {
+      trace.push({ type: "visit", point: [row, col] });
+    }
+
+    previousPoint = [row, col];
   }
 
   return true;
+}
+
+export function computeLineOfSightEnergy({
+  from,
+  to,
+  prev,
+  segmentEnergyFn,
+}) {
+  // Integrate energy along the discrete LOS trace so cost reflects terrain and yaw effort.
+  const points = bresenhamLine(from, to);
+  if (points.length < 2) {
+    return 0;
+  }
+
+  let totalEnergy = 0;
+  let previous = prev ?? null;
+
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const start = points[i];
+    const end = points[i + 1];
+    const segmentEnergy = segmentEnergyFn(start, end, previous);
+
+    if (!Number.isFinite(segmentEnergy) || segmentEnergy < 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    totalEnergy += segmentEnergy;
+    previous = start;
+  }
+
+  return totalEnergy;
 }
 
 function reconstructWaypoints(parent, startIndex, endIndex, cols) {
@@ -239,7 +320,12 @@ export function energyThetaStarGrid({
           grandParentIndex >= 0 && grandParentIndex !== parentIndex
             ? toCoord(grandParentIndex, cols)
             : null;
-        const edgeCost = weightFn(parentCoord, [nextRow, nextCol], grandParentCoord);
+        const edgeCost = computeLineOfSightEnergy({
+          from: parentCoord,
+          to: [nextRow, nextCol],
+          prev: grandParentCoord,
+          segmentEnergyFn: weightFn,
+        });
         if (Number.isFinite(edgeCost) && edgeCost >= 0) {
           relaxationOperations += 1;
           candidateG = gScores[parentIndex] + edgeCost;
@@ -285,6 +371,8 @@ export function energyThetaStarGrid({
     uniqueVisitedNodes,
     relaxationOperations,
     heuristicEvaluations,
+    losChecks,
+    losSuccess,
     debug: debug
       ? {
         losChecks,

@@ -44,11 +44,13 @@ function normalizeShiftEvent(event, fallbackStep, fallbackDirection, fallbackStr
   const step = Math.max(0, Math.floor(toFiniteNumber(event?.step, fallbackStep)));
   const direction = normalizeDirection(event?.direction, fallbackDirection);
   const strength = Math.max(0, toFiniteNumber(event?.strength, fallbackStrength));
+  const transitionSteps = Math.max(0, Math.floor(toFiniteNumber(event?.transitionSteps, 0)));
 
   return {
     step,
     direction,
     strength,
+    transitionSteps,
     label: event?.label ?? `Shift ${index + 1}`,
     source: event?.source ?? "scenario",
   };
@@ -217,6 +219,27 @@ export function getWindStateAtStep(step, environment, from = null, to = null) {
 
   for (let index = 0; index < normalized.windShifts.length; index += 1) {
     const shift = normalized.windShifts[index];
+    const transitionStart = Math.max(0, shift.step - (shift.transitionSteps ?? 0));
+    const transitionSteps = shift.transitionSteps ?? 0;
+
+    if (transitionSteps > 0 && absoluteStep >= transitionStart && absoluteStep < shift.step) {
+      const progress = (absoluteStep - transitionStart + 1) / transitionSteps;
+      const clamped = Math.max(0, Math.min(1, progress));
+      const previousStrength = activeState.strength;
+      const blendedStrength = previousStrength + (shift.strength - previousStrength) * clamped;
+
+      activeState = {
+        ...activeState,
+        strength: blendedStrength,
+        label: shift.label,
+        shiftIndex: index,
+        lastShiftStep: shift.step,
+        transitionStep: absoluteStep,
+      };
+
+      continue;
+    }
+
     if (absoluteStep < shift.step) {
       break;
     }
@@ -241,6 +264,13 @@ export function getWindShiftEvents(environment) {
 export function getWindChangeSteps(environment) {
   const normalized = normalizeDynamicEnvironment(environment);
   const steps = new Set(normalized.windShifts.map((shift) => shift.step));
+
+  normalized.windShifts.forEach((shift) => {
+    if (shift.transitionSteps && shift.transitionSteps > 0) {
+      const transitionStart = Math.max(0, shift.step - shift.transitionSteps);
+      steps.add(transitionStart);
+    }
+  });
 
   normalized.gustRegions.forEach((gust) => {
     steps.add(gust.startStep);

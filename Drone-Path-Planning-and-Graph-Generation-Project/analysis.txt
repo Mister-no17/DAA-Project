@@ -10,7 +10,7 @@ Metric                            Dijkstra                A*        Greedy BFS
 Total Path Cost (units)            1666.92           1666.92           2047.85
 Nodes Explored                        3640               581                56
 Path Length (nodes)                     53                53                53
-Execution Time (ms)                1210.62            264.47              2.94
+Execution Time (ms)                 909.30            175.96              1.64
 Optimality                      Guaranteed        Guaranteed    NOT guaranteed
 
 Wind Scenario: Headwind NE | Moderate NE wind with updraft | W=(3.0, 3.0, 0.5)
@@ -19,7 +19,7 @@ Metric                            Dijkstra                A*        Greedy BFS
 Total Path Cost (units)            2226.00           2226.00           2653.60
 Nodes Explored                        3530              1068                56
 Path Length (nodes)                     54                54                53
-Execution Time (ms)                1225.06            459.43              3.77
+Execution Time (ms)                 664.98            305.54              2.69
 Optimality                      Guaranteed        Guaranteed    NOT guaranteed
 
 Wind Scenario: Crosswind+Down | Strong crosswind with downdraft | W=(-5.0, 2.0, -1.0)
@@ -28,7 +28,7 @@ Metric                            Dijkstra                A*        Greedy BFS
 Total Path Cost (units)            2845.76           2845.76           3259.83
 Nodes Explored                        4106              1650                56
 Path Length (nodes)                     53                53                53
-Execution Time (ms)                1482.76            655.20              2.85
+Execution Time (ms)                 959.79            399.62              1.72
 Optimality                      Guaranteed        Guaranteed    NOT guaranteed
 
 7.1 Time Complexity

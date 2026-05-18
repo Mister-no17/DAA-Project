@@ -1,0 +1,56 @@
+{
+  "scenarioName": "Scenario 5: Storm Front Crossing",
+  "timestamp": "2026-05-18T16:46:24.075Z",
+  "environment": {
+    "windDirection": "N",
+    "windStrength": 1,
+    "dynamicWindEnabled": false,
+    "windShiftStep": 8,
+    "windDirectionAfterShift": "W",
+    "windStrengthAfterShift": 2.2,
+    "maxStepMultiplier": 2.5,
+    "windShifts": [
+      {
+        "step": 4,
+        "direction": "W",
+        "strength": 2.6,
+        "transitionSteps": 2,
+        "label": "Storm front",
+        "source": "scenario"
+      },
+      {
+        "step": 9,
+        "direction": "S",
+        "strength": 1.8,
+        "transitionSteps": 0,
+        "label": "Post-front tail",
+        "source": "scenario"
+      }
+    ],
+    "gustRegions": [],
+    "distanceCoefficient": 1,
+    "averageEnergyFactor": 1,
+    "windCoefficient": 1,
+    "turningCoefficient": 0.22,
+    "windLowerBoundPerStep": 0,
+    "turnLowerBoundPerStep": 0,
+    "replanStrengthThreshold": 0.3,
+    "replanDirectionThreshold": 0.5235987755982988,
+    "mass": 1,
+    "gravity": 9.81,
+    "altitudeFactor": 1.1,
+    "downhillFactor": 0.35
+  },
+  "grid": {
+    "rows": 8,
+    "cols": 8,
+    "vertices": 60,
+    "edges": 98
+  },
+  "obstacleCount": 4,
+  "activeAlgorithms": [
+    "Standard Dijkstra",
+    "Energy-Aware A*",
+    "Energy-Aware Theta*"
+  ]
+}

@@ -3,5 +3,7 @@ export function computeTurningEnergy(turningAngleRadians, turningCoefficient) {
     return 0;
   }
 
-  return (turningCoefficient ?? 0) * Math.max(0, turningAngleRadians);
+  const angle = Math.max(0, turningAngleRadians);
+  // Quadratic penalty models curvature/yaw effort: sharper turns cost disproportionately more.
+  return (turningCoefficient ?? 0) * (angle * angle);
 }

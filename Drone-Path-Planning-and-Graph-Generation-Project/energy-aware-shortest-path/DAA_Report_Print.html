@@ -267,6 +267,14 @@ under non-negative weights.</pre>
       Time = O((T*V + T*E) log(T*V)), Space = O(T*V).
     </p>
 
+    <p>
+      Energy-Aware Theta* extends A* with line-of-sight shortcutting and any-angle parent propagation. Its theory is not described by
+      a classic divide-and-conquer recurrence; instead it is analyzed as heuristic search augmented with visibility checks.
+      Best-case time remains O((V + E) log V), while average/worst-case time grows to O((V + E) log V + L_total), where
+      L_total counts Bresenham LOS traversal across all visibility checks. Obstacle density increases LOS overhead and therefore
+      affects runtime.
+    </p>
+
     <h2>6. Scenario Results</h2>
     <table>
       <thead>

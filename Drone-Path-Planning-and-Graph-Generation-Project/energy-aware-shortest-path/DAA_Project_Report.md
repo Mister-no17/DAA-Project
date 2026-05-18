@@ -69,6 +69,20 @@ The system supports abrupt wind changes after a selected step index.
 
 This makes edge cost time-dependent and requires time-expanded minimum-energy search.
 
+### 3.5 Multi-Phase Wind and Gust Regions
+
+Wind is represented as a sequence of phases (wind shifts) and optional localized gust regions. Each phase can change
+direction and strength, and gusts temporarily amplify wind inside specified grid regions. This supports storm fronts,
+wind corridors, and directional reversals.
+
+### 3.6 Turning/Yaw Model
+
+Turning cost is modeled as a curvature penalty:
+
+E_turn = k_t * theta^2
+
+This penalizes sharp heading changes more than smooth turns, approximating UAV yaw effort and stabilization energy.
+
 ## 4. Algorithms
 
 ### 4.1 Standard Dijkstra (Baseline)
@@ -108,6 +122,7 @@ DIJKSTRA_DISTANCE(grid, start, goal):
 
 - Objective: Minimize energy-aware cost.
 - Edge Weight: distance + wind_effect + altitude_cost
+- Heuristic: admissible lower bound on remaining energy
 
 Pseudocode:
 
@@ -173,6 +188,32 @@ DIJKSTRA_ENERGY_TIME(grid, altitude, start, goal, shift_step, wind_before, wind_
     return no_path
 ```
 
+### 4.4 Adaptive Replanning (Dynamic Wind)
+
+When wind changes beyond thresholds, the planner recomputes a new route from the current state. If the wind change is
+minor, the residual plan is reused to avoid unnecessary recomputation. This approximates incremental replanning without
+full algorithmic rewrites while preserving correctness for significant shifts.
+
+### 4.5 Heuristic Admissibility (Energy-Aware A*)
+
+We use a lower-bound heuristic:
+
+h(n) = k_d * dist(n, goal) + m * g * max(0, h(goal) - h(n))
+
+Wind and turning terms are lower-bounded by 0 because the model assigns non-negative energy. This ensures h(n)
+never overestimates the true remaining energy, preserving A* optimality under non-negative edge costs.
+
+If optional per-step lower bounds are supplied, they must be guaranteed minima to preserve admissibility.
+
+### 4.6 Consistency (Monotonicity)
+
+Consistency requires:
+
+h(n) <= c(n, n') + h(n')
+
+With non-negative costs and a straight-line distance lower bound, the heuristic is typically consistent. It can be
+violated if parameters make the heuristic exceed the minimal per-step energy (for example, overly aggressive scaling).
+
 ## 5. Key Modification Explanation
 
 The algorithmic framework remains Dijkstra. The only change is the edge cost function used during relaxation.
@@ -181,6 +222,18 @@ The algorithmic framework remains Dijkstra. The only change is the edge cost fun
 - Modified: w = distance + wind_effect + altitude_cost
 
 This isolates the effect of environmental modeling while preserving correctness and complexity characteristics of Dijkstra under non-negative weights.
+
+## 5.1 Theta* Energy Reduction Rationale
+
+Theta* permits any-angle paths via LOS shortcuts, which reduces zig-zag motion. Under a quadratic turning penalty
+(E_turn = k_t * theta^2), smoother paths reduce cumulative yaw energy and stabilization effort, yielding lower total energy
+compared to grid-constrained routes.
+
+## 5.2 Dynamic Routing Rationale
+
+Static shortest paths are brittle under changing wind. By treating cost as a function of time, the planner adapts to
+environmental shifts and avoids regions that become expensive later in the route. This is critical for autonomous UAV
+navigation in non-stationary conditions.
 
 ## 6. Complexity Analysis
 
@@ -203,6 +256,23 @@ For dynamic wind mode with time-expanded states:
 1. Let T be max step horizon.
 2. Time Complexity: O((T*V + T*E) log(T*V))
 3. Space Complexity: O(T*V)
+
+Energy-Aware Theta* adds LOS-based shortcutting and dynamic parent relaxation. It is still fundamentally an A* search, but it evaluates additional straight-line visibility segments before committing a successor edge.
+
+- Recurrence relation: No standard divide-and-conquer recurrence. Theta* extends A* using line-of-sight relaxation and any-angle parent propagation.
+- Recurrence applicability: Theta* combines heuristic graph search with LOS traversal and dynamic parent relaxation for smoother any-angle routing. Heuristic guidance reduces expansion, LOS shortcuts shorten the effective search tree, and parent propagation smooths heading changes while preserving feasibility.
+
+Time Complexity:
+1. Best Case: O((V + E) log V) — heuristic guidance dominates and few LOS checks are needed.
+2. Average/Worst Case: O((V + E) log V + L_total) or equivalently O((V + E) log V + LOS_checks).
+   - LOS traversal overhead arises from Bresenham line checks across the grid.
+   - Each LOS check costs O(length_of_segment) in the number of traversed cells.
+   - Obstacle density directly affects LOS evaluation: dense obstacles increase failed LOS attempts and force more local expansions.
+   - The algorithm’s runtime depends on both graph operations and the visibility-check budget.
+
+Here L_total is the total Bresenham LOS traversal length across all checks.
+
+Adaptive replanning adds additional A*/Theta* runs, but only at wind change points that exceed thresholds. In practice, this bounds recomputation to the number of significant environment shifts rather than every step.
 
 ## 7. Experimental Scenarios and Results
 
@@ -232,6 +302,15 @@ In all three scenarios, path selection changed under environmental costs and the
 2. Energy-Aware A* is more realistic but depends on parameter tuning.
 3. Energy-optimal path can differ from distance-optimal path.
 4. Dynamic wind mode is more realistic but increases runtime and memory due time-expanded states.
+
+### Correctness and Assumptions
+
+1. Edge costs are non-negative (distance, gravity, wind, turning).
+2. Admissible heuristic preserves A* optimality when costs are non-negative.
+3. Theta* optimality is relative to the discrete LOS graph induced by Bresenham traversal.
+4. LOS assumes straight-line traversal through grid cells is feasible if all cells on the line are unblocked.
+5. Adaptive replanning reuses residual paths when changes are minor; this is an approximation but preserves safety if
+    replan thresholds are conservative.
 
 ### Edge Cases
 
