@@ -154,6 +154,7 @@
             <span><i class="swatch end"></i> End</span>
             <span><i class="swatch baseline"></i> Standard Dijkstra Path</span>
             <span><i class="swatch energy"></i> Energy-Aware A* Path</span>
+            <span><i class="swatch theta"></i> Energy-Aware Theta* Path</span>
             <span><i class="swatch overlap"></i> Shared Path Cell</span>
             <span><i class="swatch blocked"></i> Obstacle (No-fly)</span>
           </div>
@@ -174,6 +175,7 @@
                   <th>Metric</th>
                   <th>Standard Dijkstra</th>
                   <th>Energy-Aware A*</th>
+                  <th>Energy-Aware Theta*</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -181,6 +183,8 @@
           </div>
 
           <div id="statsCards" class="stats-cards"></div>
+          <div id="dynamicMetrics" class="dynamic-metrics-panel"></div>
+          <div id="windEvolution" class="wind-evolution-panel"></div>
 
           <div id="pathSummary" class="path-summary"></div>
           <div id="resultExplanation" class="result-explanation"></div>

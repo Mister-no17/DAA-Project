@@ -158,9 +158,17 @@ def compute_edge_components(
 def plot_cost_comparison(metrics: Dict[str, Dict[str, float]], output_path: Path) -> None:
     names = list(metrics.keys())
     costs = [metrics[name]["totalEnergyCost"] for name in names]
+    colors = [
+        {
+            "Standard Dijkstra": "#f08c00",
+            "Energy-Aware A*": "#0d8cb6",
+            "Energy-Aware Theta*": "#7a4ae0",
+        }.get(name, "#64748b")
+        for name in names
+    ]
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    bars = ax.bar(names, costs, color=["#f08c00", "#0d8cb6"])
+    bars = ax.bar(names, costs, color=colors)
     ax.set_title("Total Energy Cost Comparison")
     ax.set_ylabel("Energy Cost")
     ax.bar_label(bars, fmt="%.2f")
@@ -172,9 +180,17 @@ def plot_cost_comparison(metrics: Dict[str, Dict[str, float]], output_path: Path
 def plot_nodes_explored(metrics: Dict[str, Dict[str, float]], output_path: Path) -> None:
     names = list(metrics.keys())
     nodes = [metrics[name]["expandedNodes"] for name in names]
+    colors = [
+        {
+            "Standard Dijkstra": "#f08c00",
+            "Energy-Aware A*": "#0d8cb6",
+            "Energy-Aware Theta*": "#7a4ae0",
+        }.get(name, "#64748b")
+        for name in names
+    ]
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    bars = ax.bar(names, nodes, color=["#f08c00", "#0d8cb6"])
+    bars = ax.bar(names, nodes, color=colors)
     ax.set_title("Expanded Nodes Comparison")
     ax.set_ylabel("Expanded Nodes")
     ax.bar_label(bars)
@@ -189,6 +205,7 @@ def plot_altitude_profile(paths: Dict[str, List[List[int]]], altitude_grid: List
     colors = {
         "Standard Dijkstra": "red",
         "Energy-Aware A*": "blue",
+        "Energy-Aware Theta*": "#7a4ae0",
     }
 
     for name, path in paths.items():
@@ -254,6 +271,7 @@ def plot_3d_route_visualization(
     styles = {
         "Standard Dijkstra": {"color": "red", "linestyle": "--", "linewidth": 2.2},
         "Energy-Aware A*": {"color": "#1e6cf2", "linestyle": "-", "linewidth": 2.6},
+        "Energy-Aware Theta*": {"color": "#7a4ae0", "linestyle": "-.", "linewidth": 2.4},
     }
 
     for name, path in paths.items():
@@ -345,6 +363,9 @@ def build_metrics_payload(algorithms: List[Dict[str, float]], vertices: int, edg
             "windEnergy": safe_float(entry.get("windEnergy")),
             "gravityEnergy": safe_float(entry.get("gravityEnergy")),
             "turningEnergy": safe_float(entry.get("turningEnergy")),
+            "turningCount": safe_float(entry.get("turningCount")),
+            "averageHeadingChange": safe_float(entry.get("averageHeadingChange")),
+            "smoothnessScore": safe_float(entry.get("smoothnessScore")),
             "heuristicEvaluations": safe_float(entry.get("heuristicEvaluations")),
             "objectiveCost": safe_float(entry.get("objectiveCost")),
             "estimatedOperations": estimate_ops(name, vertices, edges),
@@ -402,6 +423,7 @@ def handle_report(payload: Dict[str, object]) -> Dict[str, str]:
     path_map = {
         "Standard Dijkstra": paths.get("standard", []),
         "Energy-Aware A*": paths.get("energyAStar", []),
+        "Energy-Aware Theta*": paths.get("thetaStar", []),
     }
 
     component_totals = {}

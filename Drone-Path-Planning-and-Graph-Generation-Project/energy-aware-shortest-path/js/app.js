@@ -6,10 +6,15 @@ import {
   dijkstraGrid,
   geometricDistance,
   formatCoord,
+  runAdaptiveEnergyAwareAStar,
+  runAdaptiveEnergyAwareThetaStar,
   runEnergyAwareAStar,
+  runEnergyAwareThetaStar,
   runStandardDijkstra,
 } from "./algorithms.js";
 import { PRESET_SCENARIOS, cloneGrid, getScenarioById } from "./scenarios.js";
+import { buildWindTimeline, createWindEvolutionSummary, describeWindState, normalizeDynamicEnvironment } from "./environment/dynamicWind.js";
+import { createEnvironmentController } from "./environment/environmentController.js";
 
 const elements = {
   startTourBtn: document.getElementById("startTourBtn"),
@@ -43,9 +48,11 @@ const elements = {
   windFlow: document.getElementById("windFlow"),
   windCompass: document.getElementById("windCompass"),
   windCompassLabel: document.getElementById("windCompassLabel"),
+  windEvolution: document.getElementById("windEvolution"),
   statsCards: document.getElementById("statsCards"),
   comparisonTable: document.querySelector("#comparisonTable tbody"),
   pathSummary: document.getElementById("pathSummary"),
+  dynamicMetrics: document.getElementById("dynamicMetrics"),
   resultExplanation: document.getElementById("resultExplanation"),
   statusLine: document.getElementById("statusLine"),
   enablePathGlow: document.getElementById("enablePathGlow"),
@@ -62,6 +69,7 @@ const DEFAULT_OBSTACLE_DENSITY = 0.18;
 const TOUR_DISMISSED_STORAGE_KEY = "energy-aware-tour-dismissed";
 const REPORT_SERVER_URL = "http://localhost:8001/report";
 const BENCHMARK_ITERATIONS = 100;
+const DEBUG_THETA = false;
 let windFlowEnabled = true;
 const TOUR_STEPS = [
   {
@@ -142,7 +150,7 @@ const TOUR_STEPS = [
   {
     selector: "#runBtn",
     title: "Run All Algorithms",
-    body: "Executes standard Dijkstra and Energy-Aware A* for the current grid and settings.",
+    body: "Executes standard Dijkstra, Energy-Aware A*, and Energy-Aware Theta* for the current grid and settings.",
   },
   {
     selector: "#statusLine",
@@ -206,13 +214,21 @@ const THEORY_PROFILES = Object.freeze({
     averageCase: "O((V_t + E_t) log V_t)",
     worstCase: "O((V_t + E_t) log V_t)",
   },
+  energyThetaStar: {
+    recurrence: "No standard recurrence relation (any-angle A* variant).",
+    recurrenceNote:
+      "Theta* applies A*-style search with line-of-sight shortcuts; complexity is similar to A* plus visibility checks.",
+    bestCase: "O((V + E) log V)",
+    averageCase: "O((V + E) log V)",
+    worstCase: "O((V + E) log V)",
+  },
 });
 
 function createEnvironment(overrides = {}) {
-  const merged = {
+  const merged = normalizeDynamicEnvironment({
     ...DEFAULT_ENVIRONMENT,
     ...overrides,
-  };
+  });
 
   if (!Number.isFinite(merged.mass)) {
     merged.mass = merged.altitudeFactor ?? DEFAULT_ENVIRONMENT.mass;
@@ -226,6 +242,7 @@ const state = {
   start: null,
   end: null,
   environment: createEnvironment(),
+  environmentController: createEnvironmentController(createEnvironment()),
   blockedCells: new Set(),
   paintObstacles: false,
   pathGlowEnabled: true,
@@ -383,11 +400,22 @@ function benchmarkStandard(model) {
   return (endTime - startTime) / BENCHMARK_ITERATIONS;
 }
 
-function benchmarkEnergyAwareAStar(model) {
+function benchmarkEnergyAwareAStar(model, runner = runEnergyAwareAStar) {
   const startTime = performance.now();
 
   for (let i = 0; i < BENCHMARK_ITERATIONS; i += 1) {
-    runEnergyAwareAStar(model);
+    runner(model);
+  }
+
+  const endTime = performance.now();
+  return (endTime - startTime) / BENCHMARK_ITERATIONS;
+}
+
+function benchmarkEnergyAwareThetaStar(model, runner = runEnergyAwareThetaStar) {
+  const startTime = performance.now();
+
+  for (let i = 0; i < BENCHMARK_ITERATIONS; i += 1) {
+    runner(model);
   }
 
   const endTime = performance.now();
@@ -439,6 +467,92 @@ function updateWindIndicators() {
     elements.windFlow.style.setProperty("--wind-angle", `${angle}deg`);
     elements.windFlow.style.setProperty("--wind-flow-duration", `${flowSeconds}s`);
   }
+
+  renderWindEvolution();
+}
+
+function renderWindEvolution() {
+  if (!elements.windEvolution) {
+    return;
+  }
+
+  const horizon = state.results?.energy?.steps ?? Math.max(
+    8,
+    Math.floor((state.altitudeGrid.length || 8) * (state.altitudeGrid[0]?.length || 8) / 2),
+  );
+  const summary = createWindEvolutionSummary(state.environment, horizon);
+
+  if (!summary.states.length) {
+    elements.windEvolution.innerHTML = "";
+    return;
+  }
+
+  const keyStates = summary.states.filter((entry, index, entries) => {
+    if (index === 0 || index === entries.length - 1) {
+      return true;
+    }
+
+    const previous = entries[index - 1];
+    return previous.direction !== entry.direction || Math.abs(previous.strength - entry.strength) > 0.05 || previous.hasGust !== entry.hasGust;
+  });
+
+  const chips = keyStates.slice(0, 10).map((entry) => {
+    const gustClass = entry.hasGust ? " gust" : "";
+    return `
+      <span class="wind-evolution-chip${gustClass}">
+        <strong>t${entry.step}</strong>
+        <span>${describeWindState(entry)}</span>
+      </span>
+    `;
+  }).join("");
+
+  elements.windEvolution.innerHTML = `
+    <div class="wind-evolution-header">
+      <span>Wind evolution</span>
+      <span>${summary.shiftCount} shifts, ${summary.gustCount} gust samples</span>
+    </div>
+    <div class="wind-evolution-track">${chips}</div>
+  `;
+}
+
+function renderDynamicMetrics() {
+  if (!elements.dynamicMetrics) {
+    return;
+  }
+
+  if (!state.results) {
+    elements.dynamicMetrics.innerHTML = "";
+    return;
+  }
+
+  const adaptiveResult = state.results.energy?.dynamicSummary?.enabled
+    ? state.results.energy
+    : state.results.theta?.dynamicSummary?.enabled
+      ? state.results.theta
+      : null;
+
+  if (!adaptiveResult?.dynamicSummary?.enabled) {
+    elements.dynamicMetrics.innerHTML = "<p class=\"muted-text\">Dynamic adaptation metrics appear when dynamic wind is enabled.</p>";
+    return;
+  }
+
+  const summary = adaptiveResult.dynamicSummary;
+  const shiftCount = summary.environmentShiftCount ?? 0;
+  const replanCount = summary.replanCount ?? 0;
+  const routeStability = Number.isFinite(summary.routeStability) ? `${(summary.routeStability * 100).toFixed(1)}%` : "N/A";
+  const energyFluctuation = Number.isFinite(summary.energyFluctuation) ? summary.energyFluctuation.toFixed(3) : "N/A";
+  const overhead = Number.isFinite(summary.adaptationOverheadMs) ? summary.adaptationOverheadMs.toFixed(2) : "N/A";
+
+  elements.dynamicMetrics.innerHTML = `
+    <div class="dynamic-metrics-card">
+      <h3>Adaptive Environment</h3>
+      <p>Environment shifts: ${shiftCount}</p>
+      <p>Replans: ${replanCount}</p>
+      <p>Route stability: ${routeStability}</p>
+      <p>Energy fluctuation: ${energyFluctuation}</p>
+      <p>Adaptation overhead (ms): ${overhead}</p>
+    </div>
+  `;
 }
 
 function updateWindFlowVisibility() {
@@ -465,7 +579,13 @@ function buildReportPayload() {
   }
 
   const gridStats = computeGridStats(state.altitudeGrid, state.blockedCells);
-  const algorithms = [state.results.standard, state.results.energy];
+  const algorithms = [state.results.standard, state.results.energy, state.results.theta];
+  const adaptiveResult = state.results.energy?.dynamicSummary?.enabled
+    ? state.results.energy
+    : state.results.theta?.dynamicSummary?.enabled
+      ? state.results.theta
+      : null;
+  const dynamicTimeline = adaptiveResult?.dynamicTimeline ?? createWindEvolutionSummary(state.environment, adaptiveResult?.steps ?? 0);
 
   return {
     scenarioName: getScenarioLabel(),
@@ -477,6 +597,14 @@ function buildReportPayload() {
       edges: gridStats.edges,
     },
     environment: { ...state.environment },
+    dynamicEnvironment: {
+      enabled: Boolean(state.environment.dynamicWindEnabled || (state.environment.windShifts?.length ?? 0) > 0 || (state.environment.gustRegions?.length ?? 0) > 0),
+      timeline: dynamicTimeline.states ?? [],
+      changeSteps: dynamicTimeline.changeSteps ?? [],
+      activeShifts: dynamicTimeline.activeShifts ?? [],
+      gustRegions: state.environment.gustRegions ?? [],
+    },
+    dynamicMetrics: adaptiveResult?.dynamicSummary ?? null,
     obstacles: Array.from(state.blockedCells),
     start: state.start,
     end: state.end,
@@ -490,6 +618,9 @@ function buildReportPayload() {
       windEnergy: result.windEnergy,
       gravityEnergy: result.gravityEnergy,
       turningEnergy: result.turningEnergy,
+      turningCount: result.turningCount ?? 0,
+      averageHeadingChange: result.averageHeadingChange ?? 0,
+      smoothnessScore: result.smoothnessScore ?? 0,
       executionTimeMs: result.executionTimeMs,
       executionTime: result.executionTime ?? result.actualExecutionTime ?? result.executionTimeMs,
       averageExecutionTime: result.averageExecutionTime ?? null,
@@ -499,11 +630,18 @@ function buildReportPayload() {
       heuristicEvaluations: result.heuristicEvaluations ?? 0,
       steps: result.steps,
       dynamicWindUsed: result.dynamicWindUsed,
+      dynamicReplanning: result.dynamicReplanning ?? false,
+      environmentShiftCount: result.environmentShiftCount ?? 0,
+      replanCount: result.replanCount ?? 0,
+      routeStability: result.routeStability ?? 1,
+      energyFluctuation: result.energyFluctuation ?? 0,
+      adaptationOverheadMs: result.adaptationOverheadMs ?? 0,
       estimatedOperations: estimateOperations(result.algorithm, gridStats.vertices, gridStats.edges),
     })),
     paths: {
       standard: state.results.standard.path,
       energyAStar: state.results.energy.path,
+      thetaStar: state.results.theta.segmentPath ?? state.results.theta.path,
     },
   };
 }
@@ -521,6 +659,10 @@ function getTheoryProfile(result) {
     return result.dynamicWindUsed
       ? THEORY_PROFILES.energyAStarDynamic
       : THEORY_PROFILES.energyAStarStatic;
+  }
+
+  if (result.algorithm === "Energy-Aware Theta*") {
+    return THEORY_PROFILES.energyThetaStar;
   }
 
   return THEORY_PROFILES.energyAStarStatic;
@@ -597,6 +739,15 @@ function applyControlsFromState() {
   updateWindIndicators();
   updateWindFlowVisibility();
 
+
+function syncEnvironmentController() {
+  if (!state.environmentController) {
+    state.environmentController = createEnvironmentController(state.environment);
+    return;
+  }
+
+  state.environmentController.reset(state.environment);
+}
   if (state.activeScenarioId) {
     elements.scenarioSelect.value = state.activeScenarioId;
   }
@@ -652,17 +803,22 @@ function renderGrid() {
   const { min, max } = altitudeBounds(state.altitudeGrid);
   const standardPath = state.results?.standard?.path ?? [];
   const energyPath = state.results?.energy?.path ?? [];
+  const thetaPath = state.results?.theta?.path ?? [];
   const baselineSet = pathToSet(standardPath);
   const energySet = pathToSet(energyPath);
+  const thetaSet = pathToSet(thetaPath);
   const baselineIndexMap = pathIndexMap(standardPath);
   const energyIndexMap = pathIndexMap(energyPath);
+  const thetaIndexMap = pathIndexMap(thetaPath);
   const flowStepMs = 140;
   const minFlowDurationMs = 1400;
   const standardDurationMs = Math.max(minFlowDurationMs, standardPath.length * flowStepMs);
   const energyDurationMs = Math.max(minFlowDurationMs, energyPath.length * flowStepMs);
-  const overlapDurationMs = Math.max(standardDurationMs, energyDurationMs);
+  const thetaDurationMs = Math.max(minFlowDurationMs, thetaPath.length * flowStepMs);
+  const overlapDurationMs = Math.max(standardDurationMs, energyDurationMs, thetaDurationMs);
   const standardOffsetMs = 0;
   const energyOffsetMs = 150;
+  const thetaOffsetMs = 300;
 
   elements.grid.style.setProperty("--grid-cols", cols);
   elements.grid.innerHTML = "";
@@ -681,16 +837,18 @@ function renderGrid() {
 
       const inBaseline = baselineSet.has(key);
       const inEnergy = energySet.has(key);
+      const inTheta = thetaSet.has(key);
       const blocked = state.blockedCells.has(key);
 
       if (blocked) {
         cell.classList.add("blocked");
-      } else if (pathSetCount(key, baselineSet, energySet) >= 2) {
+      } else if (pathSetCount(key, baselineSet, energySet, thetaSet) >= 2) {
         cell.classList.add("path-overlap");
         if (state.pathGlowEnabled) {
           const indices = [
             baselineIndexMap.get(key),
             energyIndexMap.get(key),
+            thetaIndexMap.get(key),
           ].filter((value) => Number.isFinite(value));
           const overlapIndex = indices.length > 0 ? Math.min(...indices) : 0;
           cell.classList.add("path-flow", "path-overlap-flow");
@@ -712,6 +870,14 @@ function renderGrid() {
           cell.classList.add("path-flow", "path-flow-energy");
           cell.style.setProperty("--flow-delay", `${index * flowStepMs + energyOffsetMs}ms`);
           cell.style.setProperty("--flow-duration", `${energyDurationMs}ms`);
+        }
+      } else if (inTheta) {
+        cell.classList.add("path-theta");
+        if (state.pathGlowEnabled) {
+          const index = thetaIndexMap.get(key) ?? 0;
+          cell.classList.add("path-flow", "path-flow-theta");
+          cell.style.setProperty("--flow-delay", `${index * flowStepMs + thetaOffsetMs}ms`);
+          cell.style.setProperty("--flow-duration", `${thetaDurationMs}ms`);
         }
       }
 
@@ -735,12 +901,12 @@ function renderGrid() {
 }
 
 function cardHtml(result) {
-  const theory = getTheoryProfile(result);
+  const theory = result.theory ?? getTheoryProfile(result);
   const gridStats = computeGridStats(state.altitudeGrid, state.blockedCells);
   const runtimeMetrics = buildRuntimeMetrics(
     result,
     gridStats,
-    result.actualExecutionTime ?? result.executionTimeMs,
+    result.runtimeMs ?? result.actualExecutionTime ?? result.executionTimeMs,
   );
 
   return `
@@ -752,27 +918,35 @@ function cardHtml(result) {
       <p>Wind energy: ${formatNumber(result.windEnergy)}</p>
       <p>Gravity energy: ${formatNumber(result.gravityEnergy)}</p>
       <p>Turning energy: ${formatNumber(result.turningEnergy)}</p>
-      <p>Execution time (ms): ${formatNumber(runtimeMetrics.actualExecutionTime, 4)}</p>
-      <p>Avg benchmark time (ms, ${BENCHMARK_ITERATIONS} runs): ${formatNumber(runtimeMetrics.averageExecutionTime, 4)}</p>
+      <p>Turning count: ${result.turningCount ?? "N/A"}</p>
+      <p>Avg heading change (rad): ${formatNumber(result.averageHeadingChange ?? NaN)}</p>
+      <p>Smoothness score: ${formatNumber(result.smoothnessScore ?? NaN)}</p>
+      <p>Execution time (ms): ${formatNumber(result.runtimeMs ?? runtimeMetrics.actualExecutionTime, 4)}</p>
+      <p>Avg benchmark time (ms, ${BENCHMARK_ITERATIONS} runs): ${formatNumber(result.avgBenchmarkTime ?? runtimeMetrics.averageExecutionTime, 4)}</p>
       <p>Expanded nodes: ${result.expandedNodes}</p>
       <p>Heuristic evaluations: ${result.heuristicEvaluations ?? "N/A"}</p>
       <p>Path steps: ${result.steps}</p>
       <p>Blocked cells: ${result.blockedCells}</p>
       <p>Dynamic wind: ${result.dynamicWindUsed ? "Enabled" : "Disabled"}</p>
+      <p>Replans: ${result.replanCount ?? 0}</p>
+      <p>Environment shifts: ${result.environmentShiftCount ?? 0}</p>
+      <p>Route stability: ${formatPercent(result.routeStability ?? 1)}</p>
+      <p>Energy fluctuation: ${formatNumber(result.energyFluctuation ?? 0, 3)}</p>
+      <p>Adaptation overhead (ms): ${formatNumber(result.adaptationOverheadMs ?? 0, 3)}</p>
       <p class="complexity-heading">Recurrence relation</p>
-      <p>${theory.recurrence}</p>
-      <p class="complexity-note">${theory.recurrenceNote}</p>
+      <p>${theory.recurrence ?? result.recurrenceRelation ?? "N/A"}</p>
+      <p class="complexity-note">${theory.recurrenceNote ?? result.recurrenceApplicability ?? "N/A"}</p>
       <p class="complexity-heading">Time complexity</p>
-      <p>Best: ${theory.bestCase}</p>
-      <p>Average: ${theory.averageCase}</p>
-      <p>Worst: ${theory.worstCase}</p>
+      <p>Best: ${theory.bestCase ?? result.bestCaseComplexity ?? "N/A"}</p>
+      <p>Average: ${theory.averageCase ?? result.averageCaseComplexity ?? "N/A"}</p>
+      <p>Worst: ${theory.worstCase ?? result.worstCaseComplexity ?? "N/A"}</p>
       <p class="complexity-heading">Runtime stats</p>
       <p>Vertices (V): ${gridStats.vertices}</p>
       <p>Edges (E): ${gridStats.edges}</p>
       <p>Estimated workload: ${formatOps(runtimeMetrics.estimatedWorkload)}</p>
       <p>Expanded nodes: ${result.expandedNodes}</p>
-      <p>Execution time (ms): ${formatNumber(runtimeMetrics.actualExecutionTime, 4)}</p>
-      <p>Avg benchmark time (ms, ${BENCHMARK_ITERATIONS} runs): ${formatNumber(runtimeMetrics.averageExecutionTime, 4)}</p>
+      <p>Execution time (ms): ${formatNumber(result.runtimeMs ?? runtimeMetrics.actualExecutionTime, 4)}</p>
+      <p>Avg benchmark time (ms, ${BENCHMARK_ITERATIONS} runs): ${formatNumber(result.avgBenchmarkTime ?? runtimeMetrics.averageExecutionTime, 4)}</p>
     </div>
   `;
 }
@@ -783,7 +957,8 @@ function renderStatsCards() {
     return;
   }
 
-  elements.statsCards.innerHTML = `${cardHtml(state.results.standard)}${cardHtml(state.results.energy)}`;
+  elements.statsCards.innerHTML =
+    `${cardHtml(state.results.standard)}${cardHtml(state.results.energy)}${cardHtml(state.results.theta)}`;
 }
 
 function renderComparisonTable() {
@@ -794,8 +969,10 @@ function renderComparisonTable() {
 
   const standard = state.results.standard;
   const energy = state.results.energy;
+  const theta = state.results.theta;
   const standardTheory = getTheoryProfile(standard);
   const energyTheory = getTheoryProfile(energy);
+  const thetaTheory = theta.theory ?? getTheoryProfile(theta);
   const gridStats = computeGridStats(state.altitudeGrid, state.blockedCells);
   const standardMetrics = buildRuntimeMetrics(
     standard,
@@ -807,29 +984,43 @@ function renderComparisonTable() {
     gridStats,
     energy.actualExecutionTime ?? energy.executionTimeMs,
   );
-  const bestEnergy = Math.min(standard.totalEnergyCost, energy.totalEnergyCost);
+  const thetaMetrics = buildRuntimeMetrics(
+    theta,
+    gridStats,
+    theta.runtimeMs ?? theta.actualExecutionTime ?? theta.executionTimeMs,
+  );
+  const bestEnergy = Math.min(standard.totalEnergyCost, energy.totalEnergyCost, theta.totalEnergyCost);
   const bestTime = Math.min(
     standardMetrics.actualExecutionTime,
     energyMetrics.actualExecutionTime,
+    thetaMetrics.actualExecutionTime,
   );
-  const bestExpanded = Math.min(standard.expandedNodes, energy.expandedNodes);
+  const bestExpanded = Math.min(standard.expandedNodes, energy.expandedNodes, theta.expandedNodes);
   const costBaseline = standard.totalEnergyCost;
 
   const energyBadgeStandard = standard.totalEnergyCost === bestEnergy ? metricBadge("Best") : "";
   const energyBadgeEnergy = energy.totalEnergyCost === bestEnergy ? metricBadge("Best") : "";
+  const energyBadgeTheta = theta.totalEnergyCost === bestEnergy ? metricBadge("Best") : "";
   const timeBadgeStandard = standardMetrics.actualExecutionTime === bestTime ? metricBadge("Fast") : "";
   const timeBadgeEnergy = energyMetrics.actualExecutionTime === bestTime ? metricBadge("Fast") : "";
+  const timeBadgeTheta = thetaMetrics.actualExecutionTime === bestTime ? metricBadge("Fast") : "";
   const expandedBadgeStandard = standard.expandedNodes === bestExpanded ? metricBadge("Light") : "";
   const expandedBadgeEnergy = energy.expandedNodes === bestExpanded ? metricBadge("Light") : "";
+  const expandedBadgeTheta = theta.expandedNodes === bestExpanded ? metricBadge("Light") : "";
 
   const standardCostImprove = costBaseline > 0 ? 0 : null;
   const energyCostImprove = costBaseline > 0 ? (costBaseline - energy.totalEnergyCost) / costBaseline : null;
+  const thetaEnergyCost = theta.totalEnergy ?? theta.totalEnergyCost;
+  const thetaCostImprove = costBaseline > 0 ? (costBaseline - thetaEnergyCost) / costBaseline : null;
 
   const standardUniqueRatio = gridStats.vertices > 0
     ? standard.uniqueVisitedNodes / gridStats.vertices
     : null;
   const energyUniqueRatio = gridStats.vertices > 0
     ? energy.uniqueVisitedNodes / gridStats.vertices
+    : null;
+  const thetaUniqueRatio = gridStats.vertices > 0
+    ? theta.uniqueVisitedNodes / gridStats.vertices
     : null;
 
   const standardEfficiency = standardMetrics.actualExecutionTime > 0
@@ -838,95 +1029,166 @@ function renderComparisonTable() {
   const energyEfficiency = energyMetrics.actualExecutionTime > 0
     ? energy.expandedNodes / energyMetrics.actualExecutionTime
     : null;
+  const thetaEfficiency = thetaMetrics.actualExecutionTime > 0
+    ? theta.expandedNodes / thetaMetrics.actualExecutionTime
+    : null;
 
   const standardExplorationEfficiency = standard.expandedNodes > 0 ? standard.steps / standard.expandedNodes : null;
   const energyExplorationEfficiency = energy.expandedNodes > 0 ? energy.steps / energy.expandedNodes : null;
+  const thetaExplorationEfficiency = theta.expandedNodes > 0 ? theta.steps / theta.expandedNodes : null;
+  const standardStability = standard.routeStability ?? 1;
+  const energyStability = energy.routeStability ?? 1;
+  const thetaStability = theta.routeStability ?? 1;
 
 
   elements.comparisonTable.innerHTML = `
     <tr class="table-section">
-      <td colspan="3">Core Metrics</td>
+      <td colspan="4">Core Metrics</td>
     </tr>
     <tr>
       <td>Objective value</td>
       <td>${formatNumber(standard.objectiveCost)}</td>
       <td>${formatNumber(energy.objectiveCost)}</td>
+      <td>${formatNumber(theta.objectiveCost)}</td>
     </tr>
     <tr>
       <td>Optimization target</td>
       <td>${standard.optimizedFor}</td>
       <td>${energy.optimizedFor}</td>
+      <td>${theta.optimizedFor}</td>
     </tr>
     <tr>
       <td>Path distance</td>
       <td>${formatNumber(standard.totalDistance)}</td>
       <td>${formatNumber(energy.totalDistance)}</td>
+      <td>${formatNumber(theta.totalDistance)}</td>
     </tr>
     <tr>
       <td>Minimum energy cost</td>
       <td>${formatNumber(standard.totalEnergyCost)} ${energyBadgeStandard}</td>
       <td>${formatNumber(energy.totalEnergyCost)} ${energyBadgeEnergy}</td>
+      <td>${formatNumber(thetaEnergyCost)} ${energyBadgeTheta}</td>
     </tr>
     <tr>
       <td>Wind energy</td>
       <td>${formatNumber(standard.windEnergy)}</td>
       <td>${formatNumber(energy.windEnergy)}</td>
+      <td>${formatNumber(theta.windEnergy)}</td>
     </tr>
     <tr>
       <td>Gravity energy</td>
       <td>${formatNumber(standard.gravityEnergy)}</td>
       <td>${formatNumber(energy.gravityEnergy)}</td>
+      <td>${formatNumber(theta.gravityEnergy)}</td>
     </tr>
     <tr>
       <td>Turning energy</td>
       <td>${formatNumber(standard.turningEnergy)}</td>
       <td>${formatNumber(energy.turningEnergy)}</td>
+      <td>${formatNumber(theta.turningEnergy)}</td>
+    </tr>
+    <tr>
+      <td>Turning count</td>
+      <td>${standard.turningCount ?? 0}</td>
+      <td>${energy.turningCount ?? 0}</td>
+      <td>${theta.turningCount ?? 0}</td>
+    </tr>
+    <tr>
+      <td>Avg heading change (rad)</td>
+      <td>${formatNumber(standard.averageHeadingChange ?? NaN)}</td>
+      <td>${formatNumber(energy.averageHeadingChange ?? NaN)}</td>
+      <td>${formatNumber(theta.averageHeadingChange ?? NaN)}</td>
+    </tr>
+    <tr>
+      <td>Smoothness score</td>
+      <td>${formatNumber(standard.smoothnessScore ?? NaN)}</td>
+      <td>${formatNumber(energy.smoothnessScore ?? NaN)}</td>
+      <td>${formatNumber(theta.smoothnessScore ?? NaN)}</td>
     </tr>
     <tr>
       <td>Execution time (ms)</td>
       <td>${formatNumber(standardMetrics.actualExecutionTime, 4)} ${timeBadgeStandard}</td>
       <td>${formatNumber(energyMetrics.actualExecutionTime, 4)} ${timeBadgeEnergy}</td>
+      <td>${formatNumber(theta.runtimeMs ?? thetaMetrics.actualExecutionTime, 4)} ${timeBadgeTheta}</td>
     </tr>
     <tr>
       <td>Avg benchmark time (ms, ${BENCHMARK_ITERATIONS} runs)</td>
       <td>${formatNumber(standardMetrics.averageExecutionTime, 4)}</td>
       <td>${formatNumber(energyMetrics.averageExecutionTime, 4)}</td>
+      <td>${formatNumber(theta.avgBenchmarkTime ?? thetaMetrics.averageExecutionTime, 4)}</td>
     </tr>
     <tr>
       <td>Expanded nodes</td>
       <td>${standard.expandedNodes} ${expandedBadgeStandard}</td>
       <td>${energy.expandedNodes} ${expandedBadgeEnergy}</td>
+      <td>${theta.expandedNodes} ${expandedBadgeTheta}</td>
     </tr>
     <tr>
       <td>Unique visited nodes</td>
       <td>${standard.uniqueVisitedNodes}</td>
       <td>${energy.uniqueVisitedNodes}</td>
+      <td>${theta.uniqueVisitedNodes}</td>
     </tr>
     <tr>
       <td>Relaxation operations</td>
       <td>${formatOps(standard.relaxationOperations)}</td>
       <td>${formatOps(energy.relaxationOperations)}</td>
+      <td>${formatOps(theta.relaxationOperations)}</td>
     </tr>
     <tr>
       <td>Heuristic evaluations</td>
       <td>N/A</td>
       <td>${formatOps(energy.heuristicEvaluations ?? 0)}</td>
+      <td>${formatOps(theta.heuristicEvaluations ?? 0)}</td>
     </tr>
     <tr>
       <td>Path steps</td>
       <td>${standard.steps}</td>
       <td>${energy.steps}</td>
+      <td>${theta.steps}</td>
+    </tr>
+    <tr>
+      <td>Environment shifts</td>
+      <td>${standard.environmentShiftCount ?? 0}</td>
+      <td>${energy.environmentShiftCount ?? 0}</td>
+      <td>${theta.environmentShiftCount ?? 0}</td>
+    </tr>
+    <tr>
+      <td>Replans</td>
+      <td>${standard.replanCount ?? 0}</td>
+      <td>${energy.replanCount ?? 0}</td>
+      <td>${theta.replanCount ?? 0}</td>
+    </tr>
+    <tr>
+      <td>Route stability</td>
+      <td>${formatPercent(standardStability)}</td>
+      <td>${formatPercent(energyStability)}</td>
+      <td>${formatPercent(thetaStability)}</td>
+    </tr>
+    <tr>
+      <td>Energy fluctuation</td>
+      <td>${formatNumber(standard.energyFluctuation ?? 0, 3)}</td>
+      <td>${formatNumber(energy.energyFluctuation ?? 0, 3)}</td>
+      <td>${formatNumber(theta.energyFluctuation ?? 0, 3)}</td>
+    </tr>
+    <tr>
+      <td>Adaptation overhead (ms)</td>
+      <td>${formatNumber(standard.adaptationOverheadMs ?? 0, 3)}</td>
+      <td>${formatNumber(energy.adaptationOverheadMs ?? 0, 3)}</td>
+      <td>${formatNumber(theta.adaptationOverheadMs ?? 0, 3)}</td>
     </tr>
     <tr>
       <td>Blocked cells</td>
       <td>${standard.blockedCells}</td>
       <td>${energy.blockedCells}</td>
+      <td>${theta.blockedCells}</td>
     </tr>
     <tr class="table-section">
-      <td colspan="3">Graph & Runtime Metrics</td>
+      <td colspan="4">Graph & Runtime Metrics</td>
     </tr>
     <tr>
       <td>Vertices (V)</td>
+      <td>${gridStats.vertices}</td>
       <td>${gridStats.vertices}</td>
       <td>${gridStats.vertices}</td>
     </tr>
@@ -934,69 +1196,82 @@ function renderComparisonTable() {
       <td>Edges (E)</td>
       <td>${gridStats.edges}</td>
       <td>${gridStats.edges}</td>
+      <td>${gridStats.edges}</td>
     </tr>
     <tr>
       <td>Complexity formula</td>
       <td>${standardMetrics.theoreticalComplexity}</td>
       <td>${energyMetrics.theoreticalComplexity}</td>
+      <td>${thetaMetrics.theoreticalComplexity}</td>
     </tr>
     <tr>
       <td>Runtime formula used</td>
       <td>${standardMetrics.runtimeFormula}</td>
       <td>${energyMetrics.runtimeFormula}</td>
+      <td>${thetaMetrics.runtimeFormula}</td>
     </tr>
     <tr>
       <td>Estimated computational workload <span class="metric-note" title="Theoretical complexity represents asymptotic growth, while workload estimates operation scale using current graph size.">i</span></td>
       <td>${formatOps(standardMetrics.estimatedWorkload)}</td>
       <td>${formatOps(energyMetrics.estimatedWorkload)}</td>
+      <td>${formatOps(theta.nodeOperations ?? thetaMetrics.estimatedWorkload)}</td>
     </tr>
     <tr>
       <td>Unique visited ratio</td>
       <td>${formatPercent(standardUniqueRatio)}</td>
       <td>${formatPercent(energyUniqueRatio)}</td>
+      <td>${formatPercent(thetaUniqueRatio)}</td>
     </tr>
     <tr>
       <td>Efficiency score (nodes/ms)</td>
       <td>${formatRatio(standardEfficiency)}</td>
       <td>${formatRatio(energyEfficiency)}</td>
+      <td>${formatRatio(thetaEfficiency)}</td>
     </tr>
     <tr>
       <td>Exploration efficiency (steps/expanded)</td>
       <td>${formatRatio(standardExplorationEfficiency)}</td>
       <td>${formatRatio(energyExplorationEfficiency)}</td>
+      <td>${formatRatio(thetaExplorationEfficiency)}</td>
     </tr>
     <tr>
       <td>Cost improvement % (vs standard)</td>
       <td>${formatPercent(standardCostImprove)}</td>
       <td>${formatPercent(energyCostImprove)}</td>
+      <td>${formatPercent(thetaCostImprove)}</td>
     </tr>
     <tr class="table-section">
-      <td colspan="3">Theory References</td>
+      <td colspan="4">Theory References</td>
     </tr>
     <tr>
       <td>Recurrence relation</td>
       <td>${standardTheory.recurrence}</td>
       <td>${energyTheory.recurrence}</td>
+      <td>${theta.theory?.recurrenceRelation ?? theta.recurrenceRelation ?? "N/A"}</td>
     </tr>
     <tr>
       <td>Recurrence applicability</td>
       <td>${standardTheory.recurrenceNote}</td>
       <td>${energyTheory.recurrenceNote}</td>
+      <td>${theta.theory?.recurrenceApplicability ?? theta.recurrenceApplicability ?? "N/A"}</td>
     </tr>
     <tr>
       <td>Best-case time complexity</td>
       <td>${standardTheory.bestCase}</td>
       <td>${energyTheory.bestCase}</td>
+      <td>${theta.theory?.bestCaseComplexity ?? theta.bestCaseComplexity ?? "N/A"}</td>
     </tr>
     <tr>
       <td>Average-case time complexity</td>
       <td>${standardTheory.averageCase}</td>
       <td>${energyTheory.averageCase}</td>
+      <td>${theta.theory?.averageCaseComplexity ?? theta.averageCaseComplexity ?? "N/A"}</td>
     </tr>
     <tr>
       <td>Worst-case time complexity</td>
       <td>${standardTheory.worstCase}</td>
       <td>${energyTheory.worstCase}</td>
+      <td>${theta.theory?.worstCaseComplexity ?? theta.worstCaseComplexity ?? "N/A"}</td>
     </tr>
   `;
 }
@@ -1028,19 +1303,30 @@ function renderPathSummary() {
 
   const standardPath = state.results.standard.path;
   const energyPath = state.results.energy.path;
-  const pathChanged = JSON.stringify(standardPath) !== JSON.stringify(energyPath);
+  const thetaPath = state.results.theta.segmentPath ?? state.results.theta.path;
+  const standardKey = JSON.stringify(standardPath);
+  const energyKey = JSON.stringify(energyPath);
+  const thetaKey = JSON.stringify(thetaPath);
+  const pathChanged = standardKey !== energyKey || standardKey !== thetaKey;
   const windMode = state.environment.dynamicWindEnabled
     ? `Dynamic (shift at step ${state.environment.windShiftStep}: ${state.environment.windDirection}/${state.environment.windStrength.toFixed(1)} -> ${state.environment.windDirectionAfterShift}/${state.environment.windStrengthAfterShift.toFixed(1)})`
     : `Static (${state.environment.windDirection}/${state.environment.windStrength.toFixed(1)})`;
+  const dynamicResult = state.results.energy?.dynamicSummary?.enabled ? state.results.energy : state.results.theta?.dynamicSummary?.enabled ? state.results.theta : null;
+  const dynamicSummary = dynamicResult?.dynamicSummary;
+  const adaptationLine = dynamicSummary
+    ? `Adaptive replans: ${dynamicSummary.replanCount ?? 0} | Stability: ${formatPercent(dynamicSummary.routeStability ?? 1)} | Overhead: ${formatNumber(dynamicSummary.adaptationOverheadMs ?? 0, 2)} ms`
+    : `Adaptive replans: 0 | Stability: 100.0% | Overhead: 0.00 ms`;
 
   elements.pathSummary.textContent =
     `Start: ${formatCoord(state.start)}\n` +
     `End: ${formatCoord(state.end)}\n` +
     `Blocked cells: ${blockedCount()}\n` +
     `Wind mode: ${windMode}\n` +
+    `${adaptationLine}\n` +
     `Paths differ: ${pathChanged ? "Yes" : "No"}\n\n` +
     `Standard path:\n${formatPath(standardPath)}\n\n` +
-    `Energy-Aware A* path:\n${formatPath(energyPath)}`;
+    `Energy-Aware A* path:\n${formatPath(energyPath)}\n\n` +
+    `Energy-Aware Theta* path:\n${formatPath(thetaPath)}`;
 
 }
 
@@ -1076,18 +1362,25 @@ function renderResultExplanation() {
 
   const standard = state.results.standard;
   const energy = state.results.energy;
+  const theta = state.results.theta;
 
-  if (standard.path.length === 0 || energy.path.length === 0) {
+  if (standard.path.length === 0 || energy.path.length === 0 || theta.path.length === 0) {
     elements.resultExplanation.innerHTML =
       "<h3>Case-Specific Explanation</h3><p>At least one algorithm could not find a feasible route. In this setup, obstacles or environmental penalties likely disconnected the destination.</p>";
     return;
   }
 
-  const pathChanged = JSON.stringify(standard.path) !== JSON.stringify(energy.path);
+  const standardKey = JSON.stringify(standard.path);
+  const energyKey = JSON.stringify(energy.path);
+  const thetaKey = JSON.stringify(theta.segmentPath ?? theta.path);
+  const pathChanged = standardKey !== energyKey || standardKey !== thetaKey;
   const energyDelta = energy.totalEnergyCost - standard.totalEnergyCost;
+  const thetaDelta = (theta.totalEnergy ?? theta.totalEnergyCost) - standard.totalEnergyCost;
   const windDelta = energy.windEnergy - standard.windEnergy;
   const gravityDelta = energy.gravityEnergy - standard.gravityEnergy;
   const turningDelta = energy.turningEnergy - standard.turningEnergy;
+  const thetaTurningDelta = theta.turningEnergy - standard.turningEnergy;
+  const smoothnessDelta = theta.smoothnessScore - standard.smoothnessScore;
   const dynamicWindText = state.environment.dynamicWindEnabled
     ? "Dynamic wind is enabled, so the energy-aware solver plans while accounting for the wind shift during traversal."
     : "Wind is static in this run, so differences are caused by directional wind resistance and altitude trade-offs.";
@@ -1097,6 +1390,13 @@ function renderResultExplanation() {
     interpretation = "In this run, Energy-Aware A* produced a higher evaluated energy cost than standard Dijkstra, which suggests this case is strongly constrained by map geometry or obstacle layout.";
   } else if (Math.abs(energyDelta) <= 0.000001) {
     interpretation = "In this run, both methods produced nearly identical energy cost, indicating the distance-minimizing route was also energy-efficient.";
+  }
+
+  let thetaInterpretation = "Theta* produced a lower energy trajectory while smoothing heading changes.";
+  if (thetaDelta > 0.000001) {
+    thetaInterpretation = "Theta* produced a higher energy trajectory than standard Dijkstra in this run, which can happen when visibility shortcuts are limited by obstacles.";
+  } else if (Math.abs(thetaDelta) <= 0.000001) {
+    thetaInterpretation = "Theta* matched the standard route on energy cost in this run, suggesting visibility shortcuts did not change the optimum.";
   }
 
   const windInterpretation =
@@ -1120,26 +1420,43 @@ function renderResultExplanation() {
         ? "Turning energy is higher for Energy-Aware A*, meaning it accepted sharper turns to reduce other costs."
         : "Turning energy is nearly identical for standard and energy-aware runs.";
 
+  const thetaTurningInterpretation =
+    thetaTurningDelta < -0.000001
+      ? "Turning energy is lower for Theta*, which aligns with its line-of-sight shortcuts and reduced zig-zag motion."
+      : thetaTurningDelta > 0.000001
+        ? "Turning energy is higher for Theta*, suggesting visibility shortcuts were limited or constrained."
+        : "Turning energy is nearly identical for standard and Theta* runs.";
+
+  const smoothnessInterpretation =
+    smoothnessDelta > 0.000001
+      ? "Theta* improved smoothness, with smaller average heading changes along the path."
+      : smoothnessDelta < -0.000001
+        ? "Theta* did not improve smoothness in this run, likely due to obstacle constraints."
+        : "Smoothness scores are nearly identical between Theta* and the standard route.";
+
   const pathNarrative = pathChanged
-    ? "Routes differ, which confirms that environmental energy factors changed path selection beyond pure distance minimization."
-    : "Routes are the same, so distance-minimizing and energy-aware optimization aligned in this setup.";
+    ? "Routes differ across algorithms, indicating that energy weighting and visibility shortcuts changed the optimal trajectory."
+    : "Routes are the same across algorithms, so distance-minimizing and energy-aware optimization aligned in this setup.";
 
   elements.resultExplanation.innerHTML =
     "<h3>Case-Specific Explanation</h3>" +
     `<p>${pathNarrative}</p>` +
     "<ul>" +
-    `<li>${describeMetricDifference("Minimum energy cost", standard.totalEnergyCost, energy.totalEnergyCost, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Path distance", standard.totalDistance, energy.totalDistance, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Wind energy", standard.windEnergy, energy.windEnergy, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Gravity energy", standard.gravityEnergy, energy.gravityEnergy, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Turning energy", standard.turningEnergy, energy.turningEnergy, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Path steps", standard.steps, energy.steps, { lowerIsBetter: true, digits: 0 })}</li>` +
+    `<li>${describeMetricDifference("Minimum energy cost (A*)", standard.totalEnergyCost, energy.totalEnergyCost, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Minimum energy cost (Theta*)", standard.totalEnergyCost, theta.totalEnergyCost, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Path distance (A*)", standard.totalDistance, energy.totalDistance, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Path distance (Theta*)", standard.totalDistance, theta.totalDistance, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Turning energy (Theta*)", standard.turningEnergy, theta.turningEnergy, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Smoothness score (Theta*)", standard.smoothnessScore, theta.smoothnessScore, { lowerIsBetter: false })}</li>` +
     "</ul>" +
     `<p>${windInterpretation}</p>` +
     `<p>${gravityInterpretation}</p>` +
     `<p>${turningInterpretation}</p>` +
+    `<p>${thetaTurningInterpretation}</p>` +
+    `<p>${smoothnessInterpretation}</p>` +
     `<p>${dynamicWindText}</p>` +
-    `<p>${interpretation}</p>`;
+    `<p>${interpretation}</p>` +
+    `<p>${thetaInterpretation}</p>`;
 }
 
 function renderAll() {
@@ -1147,6 +1464,7 @@ function renderAll() {
   renderStatsCards();
   renderComparisonTable();
   renderPathSummary();
+  renderDynamicMetrics();
   renderResultExplanation();
 }
 
@@ -1246,30 +1564,59 @@ function runAlgorithms() {
     end: state.end,
     environment: state.environment,
     blockedSet: state.blockedCells,
+    debugTheta: DEBUG_THETA,
   };
 
+  const energyRunner = state.environment.dynamicWindEnabled ? runAdaptiveEnergyAwareAStar : runEnergyAwareAStar;
+  const thetaRunner = state.environment.dynamicWindEnabled ? runAdaptiveEnergyAwareThetaStar : runEnergyAwareThetaStar;
+
   const standardAvg = benchmarkStandard(model);
-  const energyAvg = benchmarkEnergyAwareAStar(model);
+  const energyAvg = benchmarkEnergyAwareAStar(model, energyRunner);
+  const thetaAvg = benchmarkEnergyAwareThetaStar(model, thetaRunner);
 
   const standardStart = performance.now();
   const standard = runStandardDijkstra(model);
   const standardEnd = performance.now();
 
   const energyStart = performance.now();
-  const energy = runEnergyAwareAStar(model);
+  const energy = energyRunner(model);
   const energyEnd = performance.now();
+
+  if (DEBUG_THETA) {
+    console.debug("[Theta*] execution start");
+  }
+
+  const thetaStart = performance.now();
+  const theta = thetaRunner(model);
+  const thetaEnd = performance.now();
+
+  if (DEBUG_THETA) {
+    console.debug("[Theta*] execution end", {
+      hasPath: theta.path?.length > 0,
+      totalEnergyCost: theta.totalEnergyCost,
+      turningEnergy: theta.turningEnergy,
+      turningCount: theta.turningCount,
+      smoothnessScore: theta.smoothnessScore,
+      debug: theta.debug,
+    });
+    console.log("thetaResult", theta);
+  }
 
 
   standard.actualExecutionTime = standardEnd - standardStart;
   energy.actualExecutionTime = energyEnd - energyStart;
+  theta.actualExecutionTime = thetaEnd - thetaStart;
   standard.averageExecutionTime = standardAvg;
   energy.averageExecutionTime = energyAvg;
+  theta.averageExecutionTime = thetaAvg;
   standard.executionTime = standard.actualExecutionTime;
   energy.executionTime = energy.actualExecutionTime;
+  theta.executionTime = theta.actualExecutionTime;
 
   state.results = {
     standard,
     energy,
+    theta,
   };
 
   renderAll();
@@ -1280,17 +1627,23 @@ function runAlgorithms() {
     resultElement.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  const pathChanged = JSON.stringify(standard.path) !== JSON.stringify(energy.path);
+  const pathChanged =
+    JSON.stringify(standard.path) !== JSON.stringify(energy.path) ||
+    JSON.stringify(standard.path) !== JSON.stringify(theta.segmentPath ?? theta.path);
 
-  if (standard.path.length === 0 || energy.path.length === 0) {
+  if (standard.path.length === 0 || energy.path.length === 0 || theta.path.length === 0) {
     setStatus("No feasible route found. Remove some obstacles or adjust parameters.");
     return;
   }
 
   setStatus(
     pathChanged
-      ? "Algorithms completed. Energy-aware routing selected a different minimum-energy trajectory."
-      : "Algorithms completed. Baseline and energy-aware routing match in this setup.",
+      ? (state.environment.dynamicWindEnabled
+        ? "Algorithms completed. Adaptive energy-aware routing responded to wind shifts during traversal."
+        : "Algorithms completed. Energy-aware routing and Theta* selected different trajectories.")
+      : (state.environment.dynamicWindEnabled
+        ? "Algorithms completed. Adaptive routing tracked the dynamic wind schedule without changing the final route."
+        : "Algorithms completed. Baseline and energy-aware routing match in this setup."),
   );
 }
 
@@ -1491,6 +1844,7 @@ function loadScenario(id) {
   state.blockedCells = new Set((scenario.obstacles ?? []).map((coord) => coordinateKey(coord)));
   state.paintObstacles = false;
   state.results = null;
+  syncEnvironmentController();
 
   elements.scenarioDescription.textContent = scenario.description;
   applyControlsFromState();
@@ -1553,12 +1907,14 @@ function bindEvents() {
 
   elements.windDirection.addEventListener("change", () => {
     state.environment.windDirection = elements.windDirection.value;
+    syncEnvironmentController();
     updateWindIndicators();
   });
 
   elements.windStrength.addEventListener("input", () => {
     state.environment.windStrength = Number(elements.windStrength.value);
     elements.windStrengthValue.textContent = state.environment.windStrength.toFixed(1);
+    syncEnvironmentController();
     updateWindIndicators();
   });
 
@@ -1569,6 +1925,7 @@ function bindEvents() {
 
   elements.dynamicWindEnabled.addEventListener("change", () => {
     state.environment.dynamicWindEnabled = elements.dynamicWindEnabled.checked;
+    syncEnvironmentController();
     syncWindShiftPanelState();
     state.results = null;
     renderPathSummary();
@@ -1578,17 +1935,20 @@ function bindEvents() {
   elements.windShiftStep.addEventListener("input", () => {
     state.environment.windShiftStep = Number(elements.windShiftStep.value);
     elements.windShiftStepValue.textContent = String(state.environment.windShiftStep);
+    syncEnvironmentController();
     updateWindIndicators();
   });
 
   elements.windDirectionAfterShift.addEventListener("change", () => {
     state.environment.windDirectionAfterShift = elements.windDirectionAfterShift.value;
+    syncEnvironmentController();
     updateWindIndicators();
   });
 
   elements.windStrengthAfterShift.addEventListener("input", () => {
     state.environment.windStrengthAfterShift = Number(elements.windStrengthAfterShift.value);
     elements.windStrengthAfterShiftValue.textContent = state.environment.windStrengthAfterShift.toFixed(1);
+    syncEnvironmentController();
     updateWindIndicators();
   });
 
