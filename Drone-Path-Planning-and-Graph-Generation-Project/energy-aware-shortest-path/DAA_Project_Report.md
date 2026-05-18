@@ -1,4 +1,4 @@
-# Energy-Aware Shortest Path Algorithm with Environmental Factors
+# Energy-Aware Minimum-Energy Trajectory Optimization
 
 ## DAA Course Mini-Project Report
 
@@ -9,21 +9,21 @@
 
 ## 1. Problem Definition
 
-Traditional shortest path algorithms minimize distance only. In real navigation problems (for example, drones), minimum distance is not always minimum energy. Environmental conditions such as wind and terrain elevation can increase or reduce movement cost.
+Traditional distance-minimizing routing optimizes path length only. In real navigation problems (for example, drones), minimum distance is not always minimum energy. Environmental conditions such as wind and terrain elevation can increase or reduce movement cost.
 
 This project compares:
 
 1. Standard Dijkstra's Algorithm (distance optimized)
-2. Modified Dijkstra's Algorithm (energy optimized)
+2. Energy-Aware A* (energy optimized)
 
-The modified edge cost is:
+The energy-aware edge cost is:
 
-cost = distance + wind_effect + altitude_cost
+E_total = E_distance + E_gravity + E_wind + E_turn
 
 ## 2. Objective
 
 1. Build a 2D grid-based graph.
-2. Implement baseline and modified Dijkstra algorithms.
+2. Implement baseline and energy-aware routing algorithms.
 3. Add obstacle-aware routing (no-fly zones).
 4. Add time-dependent wind shift handling.
 5. Compare both algorithms under controllable environmental parameters.
@@ -46,20 +46,19 @@ cost = distance + wind_effect + altitude_cost
 
 Formula used:
 
-wind_effect = wind_strength * (1 - dot(move_unit, wind_unit))
+E_wind = k_w * wind_strength * (1 - cos(theta))
 
-### 3.3 Altitude Model
+### 3.3 Gravity Model
 
 Each cell contains an altitude value.
 
 1. Climbing consumes more energy.
-2. Descending has a smaller cost (scaled by downhill_factor).
+2. Descending adds no gravity cost.
 
 Formula used:
 
-- climb = max(0, altitude_to - altitude_from)
-- descent = max(0, altitude_from - altitude_to)
-- altitude_cost = altitude_factor * (climb + downhill_factor * descent)
+- altitude_gain = max(0, altitude_to - altitude_from)
+- E_gravity = m * g * altitude_gain
 
 ### 3.4 Sudden Wind Shift Model
 
@@ -68,7 +67,7 @@ The system supports abrupt wind changes after a selected step index.
 1. For step < shift_step: use initial wind direction/strength.
 2. For step >= shift_step: use post-shift wind direction/strength.
 
-This makes edge cost time-dependent and requires time-expanded shortest path search.
+This makes edge cost time-dependent and requires time-expanded minimum-energy search.
 
 ## 4. Algorithms
 
@@ -105,7 +104,7 @@ DIJKSTRA_DISTANCE(grid, start, goal):
     return reconstruct_path(parent), dist[goal]
 ```
 
-### 4.2 Modified Dijkstra (Energy-Aware)
+### 4.2 Energy-Aware A* (Energy-Aware)
 
 - Objective: Minimize energy-aware cost.
 - Edge Weight: distance + wind_effect + altitude_cost
@@ -145,7 +144,7 @@ DIJKSTRA_ENERGY(grid, altitude, start, goal, wind_direction, wind_strength, alti
     return reconstruct_path(parent), dist[goal]
 ```
 
-### 4.3 Time-Expanded Modified Dijkstra (Dynamic Wind)
+### 4.3 Time-Expanded Energy-Aware A* (Dynamic Wind)
 
 When dynamic wind is enabled, state becomes (node, step) instead of only node.
 
@@ -230,7 +229,7 @@ In all three scenarios, path selection changed under environmental costs and the
 ### Trade-offs
 
 1. Standard Dijkstra is simpler but ignores physical realism.
-2. Modified Dijkstra is more realistic but depends on parameter tuning.
+2. Energy-Aware A* is more realistic but depends on parameter tuning.
 3. Energy-optimal path can differ from distance-optimal path.
 4. Dynamic wind mode is more realistic but increases runtime and memory due time-expanded states.
 

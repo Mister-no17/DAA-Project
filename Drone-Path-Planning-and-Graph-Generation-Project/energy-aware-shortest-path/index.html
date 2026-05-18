@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Energy-Aware Shortest Path | DAA Mini-Project</title>
+  <title>Energy-Aware Minimum-Energy Trajectory | DAA Mini-Project</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -18,10 +18,10 @@
 
   <main class="app-shell">
     <header class="hero panel">
-      <h1>Energy-Aware Shortest Path Algorithm</h1>
+      <h1>Energy-Aware Minimum-Energy Trajectory Optimization</h1>
       <p>
-        Compare classic Dijkstra against a modified energy-aware version using
-        wind direction, wind strength, and altitude changes.
+        Compare baseline Dijkstra against energy-aware optimization using
+        wind direction, wind strength, and climb energy.
       </p>
     </header>
 
@@ -54,7 +54,7 @@
 
         <div class="control-group">
           <label for="altitudeFactor">
-            Altitude Cost Factor: <span id="altitudeFactorValue">1.0</span>
+            Drone Mass Scale: <span id="altitudeFactorValue">1.0</span>
           </label>
           <input id="altitudeFactor" type="range" min="0" max="3" step="0.1" value="1.0" />
         </div>
@@ -153,8 +153,7 @@
             <span><i class="swatch start"></i> Start</span>
             <span><i class="swatch end"></i> End</span>
             <span><i class="swatch baseline"></i> Standard Dijkstra Path</span>
-            <span><i class="swatch energy"></i> Modified Dijkstra Path</span>
-            <span><i class="swatch dp"></i> Bellman-Ford Path</span>
+            <span><i class="swatch energy"></i> Energy-Aware A* Path</span>
             <span><i class="swatch overlap"></i> Shared Path Cell</span>
             <span><i class="swatch blocked"></i> Obstacle (No-fly)</span>
           </div>
@@ -174,8 +173,7 @@
                 <tr>
                   <th>Metric</th>
                   <th>Standard Dijkstra</th>
-                  <th>Modified Dijkstra</th>
-                  <th>Bellman-Ford DP</th>
+                  <th>Energy-Aware A*</th>
                 </tr>
               </thead>
               <tbody></tbody>

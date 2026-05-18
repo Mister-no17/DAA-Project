@@ -1,17 +1,12 @@
 import {
   DEFAULT_ENVIRONMENT,
   DIRECTION_VECTORS,
-  computeEnergyEdgeCost,
-  computeEnergyEdgeCostAtStep,
   coordinateKey,
   createRandomAltitudeGrid,
   dijkstraGrid,
-  dijkstraGridTimeAware,
   geometricDistance,
-  bellmanFordGrid,
   formatCoord,
-  runBellmanFord,
-  runModifiedDijkstra,
+  runEnergyAwareAStar,
   runStandardDijkstra,
 } from "./algorithms.js";
 import { PRESET_SCENARIOS, cloneGrid, getScenarioById } from "./scenarios.js";
@@ -72,7 +67,7 @@ const TOUR_STEPS = [
   {
     selector: ".hero",
     title: "Project Overview",
-    body: "This header summarizes the goal: compare shortest-distance routing against energy-aware routing under wind and altitude effects.",
+    body: "This header summarizes the goal: compare distance-minimizing routing against minimum-energy trajectories under wind and altitude effects.",
   },
   {
     selector: "#startTourBtn",
@@ -92,7 +87,7 @@ const TOUR_STEPS = [
   {
     selector: "#windDirection",
     title: "Wind Direction",
-    body: "Sets the wind vector direction that influences movement cost in the modified algorithm.",
+    body: "Sets the wind vector direction that influences movement cost in the energy-aware solver.",
   },
   {
     selector: "#windStrength",
@@ -101,8 +96,8 @@ const TOUR_STEPS = [
   },
   {
     selector: "#altitudeFactor",
-    title: "Altitude Cost Factor",
-    body: "Scales how expensive elevation changes are. Higher values encourage flatter routes.",
+    title: "Drone Mass Scale",
+    body: "Scales how expensive uphill climbs are. Higher values encourage flatter, energy-efficient routes.",
   },
   {
     selector: "#dynamicWindEnabled",
@@ -147,7 +142,7 @@ const TOUR_STEPS = [
   {
     selector: "#runBtn",
     title: "Run All Algorithms",
-    body: "Executes standard Dijkstra, energy-aware Dijkstra, and Bellman-Ford DP for the current grid and settings.",
+    body: "Executes standard Dijkstra and Energy-Aware A* for the current grid and settings.",
   },
   {
     selector: "#statusLine",
@@ -177,7 +172,7 @@ const TOUR_STEPS = [
   {
     selector: "#pathSummary",
     title: "Path Summary",
-    body: "Lists start/end, wind mode, whether paths differ, and condensed route strings for all three algorithms.",
+    body: "Lists start/end, wind mode, whether paths differ, and condensed route strings for both algorithms.",
   },
   {
     selector: "#resultExplanation",
@@ -195,15 +190,15 @@ const THEORY_PROFILES = Object.freeze({
     averageCase: "O((V + E) log V)",
     worstCase: "O((V + E) log V)",
   },
-  modifiedDijkstraStatic: {
+  energyAStarStatic: {
     recurrence: "No standard recurrence relation (greedy graph algorithm).",
     recurrenceNote:
-      "This is still Dijkstra-style optimization with adjusted edge weights, so complexity is analyzed like Dijkstra.",
+      "Energy-aware A* uses a Dijkstra-style priority queue here, so complexity is analyzed like Dijkstra for now.",
     bestCase: "O((V + E) log V)",
     averageCase: "O((V + E) log V)",
     worstCase: "O((V + E) log V)",
   },
-  modifiedDijkstraDynamic: {
+  energyAStarDynamic: {
     recurrence: "No standard recurrence relation (time-expanded shortest path solved greedily).",
     recurrenceNote:
       "With dynamic wind, states include time-step. Complexity is analyzed on the expanded graph instead of a classic recurrence.",
@@ -211,29 +206,19 @@ const THEORY_PROFILES = Object.freeze({
     averageCase: "O((V_t + E_t) log V_t)",
     worstCase: "O((V_t + E_t) log V_t)",
   },
-  bellmanFord: {
-    recurrence: "dp[k][v] = min(dp[k-1][v], min_{(u,v) in E}(dp[k-1][u] + w(u,v))).",
-    recurrenceNote:
-      "Bellman-Ford is dynamic programming over number of edges, so recurrence is valid and standard.",
-    bestCase: "O(E) (with early stopping)",
-    averageCase: "O(VE)",
-    worstCase: "O(VE)",
-  },
-  timeExpandedDpFallback: {
-    recurrence: "No single closed-form recurrence used in this implementation.",
-    recurrenceNote:
-      "In dynamic-wind mode this app uses time-expanded shortest-path search fallback, so the Bellman-Ford DP recurrence is not used directly.",
-    bestCase: "O((V_t + E_t) log V_t)",
-    averageCase: "O((V_t + E_t) log V_t)",
-    worstCase: "O((V_t + E_t) log V_t)",
-  },
 });
 
 function createEnvironment(overrides = {}) {
-  return {
+  const merged = {
     ...DEFAULT_ENVIRONMENT,
     ...overrides,
   };
+
+  if (!Number.isFinite(merged.mass)) {
+    merged.mass = merged.altitudeFactor ?? DEFAULT_ENVIRONMENT.mass;
+  }
+
+  return merged;
 }
 
 const state = {
@@ -325,10 +310,6 @@ function estimateOperations(algorithmName, vertices, edges) {
     return 0;
   }
 
-  if (algorithmName?.includes("Bellman-Ford")) {
-    return vertices * edges;
-  }
-
   return (vertices + edges) * Math.log2(vertices);
 }
 
@@ -361,16 +342,13 @@ function formatRatio(value, digits = 2) {
 }
 
 function buildRuntimeMetrics(result, gridStats, actualExecutionTime) {
-  const isBellmanFord = result.algorithm?.includes("Bellman-Ford");
   const vertices = gridStats.vertices;
   const edges = gridStats.edges;
-  const estimatedWorkload = isBellmanFord
-    ? vertices * edges
-    : Math.round((vertices + edges) * Math.log2(vertices || 1));
+  const estimatedWorkload = Math.round((vertices + edges) * Math.log2(vertices || 1));
 
   return {
-    theoreticalComplexity: isBellmanFord ? "O(VE)" : "O((V + E) log V)",
-    runtimeFormula: isBellmanFord ? "V * E" : "(V + E) log2(V)",
+    theoreticalComplexity: "O((V + E) log V)",
+    runtimeFormula: "(V + E) log2(V)",
     estimatedWorkload,
     actualExecutionTime,
     averageExecutionTime: result.averageExecutionTime ?? actualExecutionTime,
@@ -405,78 +383,11 @@ function benchmarkStandard(model) {
   return (endTime - startTime) / BENCHMARK_ITERATIONS;
 }
 
-function benchmarkModified(model) {
-  const rows = model.altitudeGrid.length;
-  const cols = model.altitudeGrid[0].length;
-  const blockedSet = model.blockedSet ?? new Set();
-  const dynamicMode = model.environment.dynamicWindEnabled;
+function benchmarkEnergyAwareAStar(model) {
   const startTime = performance.now();
 
-  if (dynamicMode) {
-    const horizon = computeDynamicHorizon(rows, cols, model.environment);
-    for (let i = 0; i < BENCHMARK_ITERATIONS; i += 1) {
-      dijkstraGridTimeAware({
-        rows,
-        cols,
-        start: model.start,
-        end: model.end,
-        blockedSet,
-        maxSteps: horizon,
-        weightFn: (from, to, step) =>
-          computeEnergyEdgeCostAtStep(from, to, model.altitudeGrid, model.environment, step),
-      });
-    }
-  } else {
-    for (let i = 0; i < BENCHMARK_ITERATIONS; i += 1) {
-      dijkstraGrid({
-        rows,
-        cols,
-        start: model.start,
-        end: model.end,
-        blockedSet,
-        weightFn: (from, to) =>
-          computeEnergyEdgeCost(from, to, model.altitudeGrid, model.environment),
-      });
-    }
-  }
-
-  const endTime = performance.now();
-  return (endTime - startTime) / BENCHMARK_ITERATIONS;
-}
-
-function benchmarkBellmanFord(model) {
-  const rows = model.altitudeGrid.length;
-  const cols = model.altitudeGrid[0].length;
-  const blockedSet = model.blockedSet ?? new Set();
-  const dynamicMode = model.environment.dynamicWindEnabled;
-  const startTime = performance.now();
-
-  if (dynamicMode) {
-    const horizon = computeDynamicHorizon(rows, cols, model.environment);
-    for (let i = 0; i < BENCHMARK_ITERATIONS; i += 1) {
-      dijkstraGridTimeAware({
-        rows,
-        cols,
-        start: model.start,
-        end: model.end,
-        blockedSet,
-        maxSteps: horizon,
-        weightFn: (from, to, step) =>
-          computeEnergyEdgeCostAtStep(from, to, model.altitudeGrid, model.environment, step),
-      });
-    }
-  } else {
-    for (let i = 0; i < BENCHMARK_ITERATIONS; i += 1) {
-      bellmanFordGrid({
-        rows,
-        cols,
-        start: model.start,
-        end: model.end,
-        blockedSet,
-        weightFn: (from, to) =>
-          computeEnergyEdgeCost(from, to, model.altitudeGrid, model.environment),
-      });
-    }
+  for (let i = 0; i < BENCHMARK_ITERATIONS; i += 1) {
+    runEnergyAwareAStar(model);
   }
 
   const endTime = performance.now();
@@ -554,7 +465,7 @@ function buildReportPayload() {
   }
 
   const gridStats = computeGridStats(state.altitudeGrid, state.blockedCells);
-  const algorithms = [state.results.standard, state.results.modified, state.results.dp];
+  const algorithms = [state.results.standard, state.results.energy];
 
   return {
     scenarioName: getScenarioLabel(),
@@ -576,22 +487,23 @@ function buildReportPayload() {
       objectiveCost: result.objectiveCost,
       totalDistance: result.totalDistance,
       totalEnergyCost: result.totalEnergyCost,
-      windPenalty: result.windPenalty,
-      altitudePenalty: result.altitudePenalty,
+      windEnergy: result.windEnergy,
+      gravityEnergy: result.gravityEnergy,
+      turningEnergy: result.turningEnergy,
       executionTimeMs: result.executionTimeMs,
       executionTime: result.executionTime ?? result.actualExecutionTime ?? result.executionTimeMs,
       averageExecutionTime: result.averageExecutionTime ?? null,
       expandedNodes: result.expandedNodes,
       uniqueVisitedNodes: result.uniqueVisitedNodes ?? result.expandedNodes,
       relaxationOperations: result.relaxationOperations ?? 0,
+      heuristicEvaluations: result.heuristicEvaluations ?? 0,
       steps: result.steps,
       dynamicWindUsed: result.dynamicWindUsed,
       estimatedOperations: estimateOperations(result.algorithm, gridStats.vertices, gridStats.edges),
     })),
     paths: {
       standard: state.results.standard.path,
-      modified: state.results.modified.path,
-      bellmanFord: state.results.dp.path,
+      energyAStar: state.results.energy.path,
     },
   };
 }
@@ -605,17 +517,13 @@ function getTheoryProfile(result) {
     return THEORY_PROFILES.standardDijkstra;
   }
 
-  if (result.algorithm === "Modified Dijkstra") {
+  if (result.algorithm === "Energy-Aware A*") {
     return result.dynamicWindUsed
-      ? THEORY_PROFILES.modifiedDijkstraDynamic
-      : THEORY_PROFILES.modifiedDijkstraStatic;
+      ? THEORY_PROFILES.energyAStarDynamic
+      : THEORY_PROFILES.energyAStarStatic;
   }
 
-  if (result.algorithm === "Bellman-Ford (DP)") {
-    return THEORY_PROFILES.bellmanFord;
-  }
-
-  return THEORY_PROFILES.timeExpandedDpFallback;
+  return THEORY_PROFILES.energyAStarStatic;
 }
 
 function blockedCount() {
@@ -666,14 +574,14 @@ function populateScenarioOptions() {
 function applyControlsFromState() {
   elements.windDirection.value = state.environment.windDirection;
   elements.windStrength.value = String(state.environment.windStrength);
-  elements.altitudeFactor.value = String(state.environment.altitudeFactor);
+  elements.altitudeFactor.value = String(state.environment.mass ?? state.environment.altitudeFactor);
   elements.dynamicWindEnabled.checked = state.environment.dynamicWindEnabled;
   elements.windShiftStep.value = String(state.environment.windShiftStep);
   elements.windDirectionAfterShift.value = state.environment.windDirectionAfterShift;
   elements.windStrengthAfterShift.value = String(state.environment.windStrengthAfterShift);
 
   elements.windStrengthValue.textContent = state.environment.windStrength.toFixed(1);
-  elements.altitudeFactorValue.textContent = state.environment.altitudeFactor.toFixed(1);
+  elements.altitudeFactorValue.textContent = (state.environment.mass ?? state.environment.altitudeFactor).toFixed(1);
   elements.windShiftStepValue.textContent = String(state.environment.windShiftStep);
   elements.windStrengthAfterShiftValue.textContent = state.environment.windStrengthAfterShift.toFixed(1);
   elements.obstaclePaintMode.checked = state.paintObstacles;
@@ -743,23 +651,18 @@ function renderGrid() {
   const cols = state.altitudeGrid[0].length;
   const { min, max } = altitudeBounds(state.altitudeGrid);
   const standardPath = state.results?.standard?.path ?? [];
-  const modifiedPath = state.results?.modified?.path ?? [];
-  const dpPath = state.results?.dp?.path ?? [];
+  const energyPath = state.results?.energy?.path ?? [];
   const baselineSet = pathToSet(standardPath);
-  const energySet = pathToSet(modifiedPath);
-  const dpSet = pathToSet(dpPath);
+  const energySet = pathToSet(energyPath);
   const baselineIndexMap = pathIndexMap(standardPath);
-  const energyIndexMap = pathIndexMap(modifiedPath);
-  const dpIndexMap = pathIndexMap(dpPath);
+  const energyIndexMap = pathIndexMap(energyPath);
   const flowStepMs = 140;
   const minFlowDurationMs = 1400;
   const standardDurationMs = Math.max(minFlowDurationMs, standardPath.length * flowStepMs);
-  const modifiedDurationMs = Math.max(minFlowDurationMs, modifiedPath.length * flowStepMs);
-  const dpDurationMs = Math.max(minFlowDurationMs, dpPath.length * flowStepMs);
-  const overlapDurationMs = Math.max(standardDurationMs, modifiedDurationMs, dpDurationMs);
+  const energyDurationMs = Math.max(minFlowDurationMs, energyPath.length * flowStepMs);
+  const overlapDurationMs = Math.max(standardDurationMs, energyDurationMs);
   const standardOffsetMs = 0;
-  const modifiedOffsetMs = 150;
-  const dpOffsetMs = 300;
+  const energyOffsetMs = 150;
 
   elements.grid.style.setProperty("--grid-cols", cols);
   elements.grid.innerHTML = "";
@@ -778,18 +681,16 @@ function renderGrid() {
 
       const inBaseline = baselineSet.has(key);
       const inEnergy = energySet.has(key);
-      const inDp = dpSet.has(key);
       const blocked = state.blockedCells.has(key);
 
       if (blocked) {
         cell.classList.add("blocked");
-      } else if (pathSetCount(key, baselineSet, energySet, dpSet) >= 2) {
+      } else if (pathSetCount(key, baselineSet, energySet) >= 2) {
         cell.classList.add("path-overlap");
         if (state.pathGlowEnabled) {
           const indices = [
             baselineIndexMap.get(key),
             energyIndexMap.get(key),
-            dpIndexMap.get(key),
           ].filter((value) => Number.isFinite(value));
           const overlapIndex = indices.length > 0 ? Math.min(...indices) : 0;
           cell.classList.add("path-flow", "path-overlap-flow");
@@ -809,16 +710,8 @@ function renderGrid() {
         if (state.pathGlowEnabled) {
           const index = energyIndexMap.get(key) ?? 0;
           cell.classList.add("path-flow", "path-flow-energy");
-          cell.style.setProperty("--flow-delay", `${index * flowStepMs + modifiedOffsetMs}ms`);
-          cell.style.setProperty("--flow-duration", `${modifiedDurationMs}ms`);
-        }
-      } else if (inDp) {
-        cell.classList.add("path-dp");
-        if (state.pathGlowEnabled) {
-          const index = dpIndexMap.get(key) ?? 0;
-          cell.classList.add("path-flow", "path-flow-dp");
-          cell.style.setProperty("--flow-delay", `${index * flowStepMs + dpOffsetMs}ms`);
-          cell.style.setProperty("--flow-duration", `${dpDurationMs}ms`);
+          cell.style.setProperty("--flow-delay", `${index * flowStepMs + energyOffsetMs}ms`);
+          cell.style.setProperty("--flow-duration", `${energyDurationMs}ms`);
         }
       }
 
@@ -854,13 +747,15 @@ function cardHtml(result) {
     <div class="stat-card">
       <h3>${result.algorithm}</h3>
       <p>Objective: ${result.optimizedFor}</p>
-      <p>Total distance: ${formatNumber(result.totalDistance)}</p>
-      <p>Total energy cost: ${formatNumber(result.totalEnergyCost)}</p>
-      <p>Wind penalty: ${formatNumber(result.windPenalty)}</p>
-      <p>Altitude penalty: ${formatNumber(result.altitudePenalty)}</p>
+      <p>Path distance: ${formatNumber(result.totalDistance)}</p>
+      <p>Minimum energy cost: ${formatNumber(result.totalEnergyCost)}</p>
+      <p>Wind energy: ${formatNumber(result.windEnergy)}</p>
+      <p>Gravity energy: ${formatNumber(result.gravityEnergy)}</p>
+      <p>Turning energy: ${formatNumber(result.turningEnergy)}</p>
       <p>Execution time (ms): ${formatNumber(runtimeMetrics.actualExecutionTime, 4)}</p>
       <p>Avg benchmark time (ms, ${BENCHMARK_ITERATIONS} runs): ${formatNumber(runtimeMetrics.averageExecutionTime, 4)}</p>
       <p>Expanded nodes: ${result.expandedNodes}</p>
+      <p>Heuristic evaluations: ${result.heuristicEvaluations ?? "N/A"}</p>
       <p>Path steps: ${result.steps}</p>
       <p>Blocked cells: ${result.blockedCells}</p>
       <p>Dynamic wind: ${result.dynamicWindUsed ? "Enabled" : "Disabled"}</p>
@@ -888,7 +783,7 @@ function renderStatsCards() {
     return;
   }
 
-  elements.statsCards.innerHTML = `${cardHtml(state.results.standard)}${cardHtml(state.results.modified)}${cardHtml(state.results.dp)}`;
+  elements.statsCards.innerHTML = `${cardHtml(state.results.standard)}${cardHtml(state.results.energy)}`;
 }
 
 function renderComparisonTable() {
@@ -898,156 +793,140 @@ function renderComparisonTable() {
   }
 
   const standard = state.results.standard;
-  const modified = state.results.modified;
-  const dp = state.results.dp;
+  const energy = state.results.energy;
   const standardTheory = getTheoryProfile(standard);
-  const modifiedTheory = getTheoryProfile(modified);
-  const dpTheory = getTheoryProfile(dp);
+  const energyTheory = getTheoryProfile(energy);
   const gridStats = computeGridStats(state.altitudeGrid, state.blockedCells);
   const standardMetrics = buildRuntimeMetrics(
     standard,
     gridStats,
     standard.actualExecutionTime ?? standard.executionTimeMs,
   );
-  const modifiedMetrics = buildRuntimeMetrics(
-    modified,
+  const energyMetrics = buildRuntimeMetrics(
+    energy,
     gridStats,
-    modified.actualExecutionTime ?? modified.executionTimeMs,
+    energy.actualExecutionTime ?? energy.executionTimeMs,
   );
-  const dpMetrics = buildRuntimeMetrics(dp, gridStats, dp.actualExecutionTime ?? dp.executionTimeMs);
-  const bestEnergy = Math.min(standard.totalEnergyCost, modified.totalEnergyCost, dp.totalEnergyCost);
+  const bestEnergy = Math.min(standard.totalEnergyCost, energy.totalEnergyCost);
   const bestTime = Math.min(
     standardMetrics.actualExecutionTime,
-    modifiedMetrics.actualExecutionTime,
-    dpMetrics.actualExecutionTime,
+    energyMetrics.actualExecutionTime,
   );
-  const bestExpanded = Math.min(standard.expandedNodes, modified.expandedNodes, dp.expandedNodes);
+  const bestExpanded = Math.min(standard.expandedNodes, energy.expandedNodes);
   const costBaseline = standard.totalEnergyCost;
 
   const energyBadgeStandard = standard.totalEnergyCost === bestEnergy ? metricBadge("Best") : "";
-  const energyBadgeModified = modified.totalEnergyCost === bestEnergy ? metricBadge("Best") : "";
-  const energyBadgeDp = dp.totalEnergyCost === bestEnergy ? metricBadge("Best") : "";
+  const energyBadgeEnergy = energy.totalEnergyCost === bestEnergy ? metricBadge("Best") : "";
   const timeBadgeStandard = standardMetrics.actualExecutionTime === bestTime ? metricBadge("Fast") : "";
-  const timeBadgeModified = modifiedMetrics.actualExecutionTime === bestTime ? metricBadge("Fast") : "";
-  const timeBadgeDp = dpMetrics.actualExecutionTime === bestTime ? metricBadge("Fast") : "";
+  const timeBadgeEnergy = energyMetrics.actualExecutionTime === bestTime ? metricBadge("Fast") : "";
   const expandedBadgeStandard = standard.expandedNodes === bestExpanded ? metricBadge("Light") : "";
-  const expandedBadgeModified = modified.expandedNodes === bestExpanded ? metricBadge("Light") : "";
-  const expandedBadgeDp = dp.expandedNodes === bestExpanded ? metricBadge("Light") : "";
+  const expandedBadgeEnergy = energy.expandedNodes === bestExpanded ? metricBadge("Light") : "";
 
   const standardCostImprove = costBaseline > 0 ? 0 : null;
-  const modifiedCostImprove = costBaseline > 0 ? (costBaseline - modified.totalEnergyCost) / costBaseline : null;
-  const dpCostImprove = costBaseline > 0 ? (costBaseline - dp.totalEnergyCost) / costBaseline : null;
+  const energyCostImprove = costBaseline > 0 ? (costBaseline - energy.totalEnergyCost) / costBaseline : null;
 
   const standardUniqueRatio = gridStats.vertices > 0
     ? standard.uniqueVisitedNodes / gridStats.vertices
     : null;
-  const modifiedUniqueRatio = gridStats.vertices > 0
-    ? modified.uniqueVisitedNodes / gridStats.vertices
+  const energyUniqueRatio = gridStats.vertices > 0
+    ? energy.uniqueVisitedNodes / gridStats.vertices
     : null;
-  const dpUniqueRatio = gridStats.vertices > 0 ? dp.uniqueVisitedNodes / gridStats.vertices : null;
 
   const standardEfficiency = standardMetrics.actualExecutionTime > 0
     ? standard.expandedNodes / standardMetrics.actualExecutionTime
     : null;
-  const modifiedEfficiency = modifiedMetrics.actualExecutionTime > 0
-    ? modified.expandedNodes / modifiedMetrics.actualExecutionTime
-    : null;
-  const dpEfficiency = dpMetrics.actualExecutionTime > 0
-    ? dp.expandedNodes / dpMetrics.actualExecutionTime
+  const energyEfficiency = energyMetrics.actualExecutionTime > 0
+    ? energy.expandedNodes / energyMetrics.actualExecutionTime
     : null;
 
   const standardExplorationEfficiency = standard.expandedNodes > 0 ? standard.steps / standard.expandedNodes : null;
-  const modifiedExplorationEfficiency = modified.expandedNodes > 0 ? modified.steps / modified.expandedNodes : null;
-  const dpExplorationEfficiency = dp.expandedNodes > 0 ? dp.steps / dp.expandedNodes : null;
+  const energyExplorationEfficiency = energy.expandedNodes > 0 ? energy.steps / energy.expandedNodes : null;
+
 
   elements.comparisonTable.innerHTML = `
     <tr class="table-section">
-      <td colspan="4">Core Metrics</td>
+      <td colspan="3">Core Metrics</td>
     </tr>
     <tr>
       <td>Objective value</td>
       <td>${formatNumber(standard.objectiveCost)}</td>
-      <td>${formatNumber(modified.objectiveCost)}</td>
-      <td>${formatNumber(dp.objectiveCost)}</td>
+      <td>${formatNumber(energy.objectiveCost)}</td>
     </tr>
     <tr>
-      <td>Optimized objective</td>
+      <td>Optimization target</td>
       <td>${standard.optimizedFor}</td>
-      <td>${modified.optimizedFor}</td>
-      <td>${dp.optimizedFor}</td>
+      <td>${energy.optimizedFor}</td>
     </tr>
     <tr>
-      <td>Total distance</td>
+      <td>Path distance</td>
       <td>${formatNumber(standard.totalDistance)}</td>
-      <td>${formatNumber(modified.totalDistance)}</td>
-      <td>${formatNumber(dp.totalDistance)}</td>
+      <td>${formatNumber(energy.totalDistance)}</td>
     </tr>
     <tr>
-      <td>Total energy cost</td>
+      <td>Minimum energy cost</td>
       <td>${formatNumber(standard.totalEnergyCost)} ${energyBadgeStandard}</td>
-      <td>${formatNumber(modified.totalEnergyCost)} ${energyBadgeModified}</td>
-      <td>${formatNumber(dp.totalEnergyCost)} ${energyBadgeDp}</td>
+      <td>${formatNumber(energy.totalEnergyCost)} ${energyBadgeEnergy}</td>
     </tr>
     <tr>
-      <td>Wind penalty</td>
-      <td>${formatNumber(standard.windPenalty)}</td>
-      <td>${formatNumber(modified.windPenalty)}</td>
-      <td>${formatNumber(dp.windPenalty)}</td>
+      <td>Wind energy</td>
+      <td>${formatNumber(standard.windEnergy)}</td>
+      <td>${formatNumber(energy.windEnergy)}</td>
     </tr>
     <tr>
-      <td>Altitude penalty</td>
-      <td>${formatNumber(standard.altitudePenalty)}</td>
-      <td>${formatNumber(modified.altitudePenalty)}</td>
-      <td>${formatNumber(dp.altitudePenalty)}</td>
+      <td>Gravity energy</td>
+      <td>${formatNumber(standard.gravityEnergy)}</td>
+      <td>${formatNumber(energy.gravityEnergy)}</td>
+    </tr>
+    <tr>
+      <td>Turning energy</td>
+      <td>${formatNumber(standard.turningEnergy)}</td>
+      <td>${formatNumber(energy.turningEnergy)}</td>
     </tr>
     <tr>
       <td>Execution time (ms)</td>
       <td>${formatNumber(standardMetrics.actualExecutionTime, 4)} ${timeBadgeStandard}</td>
-      <td>${formatNumber(modifiedMetrics.actualExecutionTime, 4)} ${timeBadgeModified}</td>
-      <td>${formatNumber(dpMetrics.actualExecutionTime, 4)} ${timeBadgeDp}</td>
+      <td>${formatNumber(energyMetrics.actualExecutionTime, 4)} ${timeBadgeEnergy}</td>
     </tr>
     <tr>
       <td>Avg benchmark time (ms, ${BENCHMARK_ITERATIONS} runs)</td>
       <td>${formatNumber(standardMetrics.averageExecutionTime, 4)}</td>
-      <td>${formatNumber(modifiedMetrics.averageExecutionTime, 4)}</td>
-      <td>${formatNumber(dpMetrics.averageExecutionTime, 4)}</td>
+      <td>${formatNumber(energyMetrics.averageExecutionTime, 4)}</td>
     </tr>
     <tr>
       <td>Expanded nodes</td>
       <td>${standard.expandedNodes} ${expandedBadgeStandard}</td>
-      <td>${modified.expandedNodes} ${expandedBadgeModified}</td>
-      <td>${dp.expandedNodes} ${expandedBadgeDp}</td>
+      <td>${energy.expandedNodes} ${expandedBadgeEnergy}</td>
     </tr>
     <tr>
       <td>Unique visited nodes</td>
       <td>${standard.uniqueVisitedNodes}</td>
-      <td>${modified.uniqueVisitedNodes}</td>
-      <td>${dp.uniqueVisitedNodes}</td>
+      <td>${energy.uniqueVisitedNodes}</td>
     </tr>
     <tr>
       <td>Relaxation operations</td>
       <td>${formatOps(standard.relaxationOperations)}</td>
-      <td>${formatOps(modified.relaxationOperations)}</td>
-      <td>${formatOps(dp.relaxationOperations)}</td>
+      <td>${formatOps(energy.relaxationOperations)}</td>
+    </tr>
+    <tr>
+      <td>Heuristic evaluations</td>
+      <td>N/A</td>
+      <td>${formatOps(energy.heuristicEvaluations ?? 0)}</td>
     </tr>
     <tr>
       <td>Path steps</td>
       <td>${standard.steps}</td>
-      <td>${modified.steps}</td>
-      <td>${dp.steps}</td>
+      <td>${energy.steps}</td>
     </tr>
     <tr>
       <td>Blocked cells</td>
       <td>${standard.blockedCells}</td>
-      <td>${modified.blockedCells}</td>
-      <td>${dp.blockedCells}</td>
+      <td>${energy.blockedCells}</td>
     </tr>
     <tr class="table-section">
-      <td colspan="4">Graph & Runtime Metrics</td>
+      <td colspan="3">Graph & Runtime Metrics</td>
     </tr>
     <tr>
       <td>Vertices (V)</td>
-      <td>${gridStats.vertices}</td>
       <td>${gridStats.vertices}</td>
       <td>${gridStats.vertices}</td>
     </tr>
@@ -1055,82 +934,69 @@ function renderComparisonTable() {
       <td>Edges (E)</td>
       <td>${gridStats.edges}</td>
       <td>${gridStats.edges}</td>
-      <td>${gridStats.edges}</td>
     </tr>
     <tr>
       <td>Complexity formula</td>
       <td>${standardMetrics.theoreticalComplexity}</td>
-      <td>${modifiedMetrics.theoreticalComplexity}</td>
-      <td>${dpMetrics.theoreticalComplexity}</td>
+      <td>${energyMetrics.theoreticalComplexity}</td>
     </tr>
     <tr>
       <td>Runtime formula used</td>
       <td>${standardMetrics.runtimeFormula}</td>
-      <td>${modifiedMetrics.runtimeFormula}</td>
-      <td>${dpMetrics.runtimeFormula}</td>
+      <td>${energyMetrics.runtimeFormula}</td>
     </tr>
     <tr>
       <td>Estimated computational workload <span class="metric-note" title="Theoretical complexity represents asymptotic growth, while workload estimates operation scale using current graph size.">i</span></td>
       <td>${formatOps(standardMetrics.estimatedWorkload)}</td>
-      <td>${formatOps(modifiedMetrics.estimatedWorkload)}</td>
-      <td>${formatOps(dpMetrics.estimatedWorkload)}</td>
+      <td>${formatOps(energyMetrics.estimatedWorkload)}</td>
     </tr>
     <tr>
       <td>Unique visited ratio</td>
       <td>${formatPercent(standardUniqueRatio)}</td>
-      <td>${formatPercent(modifiedUniqueRatio)}</td>
-      <td>${formatPercent(dpUniqueRatio)}</td>
+      <td>${formatPercent(energyUniqueRatio)}</td>
     </tr>
     <tr>
       <td>Efficiency score (nodes/ms)</td>
       <td>${formatRatio(standardEfficiency)}</td>
-      <td>${formatRatio(modifiedEfficiency)}</td>
-      <td>${formatRatio(dpEfficiency)}</td>
+      <td>${formatRatio(energyEfficiency)}</td>
     </tr>
     <tr>
       <td>Exploration efficiency (steps/expanded)</td>
       <td>${formatRatio(standardExplorationEfficiency)}</td>
-      <td>${formatRatio(modifiedExplorationEfficiency)}</td>
-      <td>${formatRatio(dpExplorationEfficiency)}</td>
+      <td>${formatRatio(energyExplorationEfficiency)}</td>
     </tr>
     <tr>
       <td>Cost improvement % (vs standard)</td>
       <td>${formatPercent(standardCostImprove)}</td>
-      <td>${formatPercent(modifiedCostImprove)}</td>
-      <td>${formatPercent(dpCostImprove)}</td>
+      <td>${formatPercent(energyCostImprove)}</td>
     </tr>
     <tr class="table-section">
-      <td colspan="4">Theory References</td>
+      <td colspan="3">Theory References</td>
     </tr>
     <tr>
       <td>Recurrence relation</td>
       <td>${standardTheory.recurrence}</td>
-      <td>${modifiedTheory.recurrence}</td>
-      <td>${dpTheory.recurrence}</td>
+      <td>${energyTheory.recurrence}</td>
     </tr>
     <tr>
       <td>Recurrence applicability</td>
       <td>${standardTheory.recurrenceNote}</td>
-      <td>${modifiedTheory.recurrenceNote}</td>
-      <td>${dpTheory.recurrenceNote}</td>
+      <td>${energyTheory.recurrenceNote}</td>
     </tr>
     <tr>
       <td>Best-case time complexity</td>
       <td>${standardTheory.bestCase}</td>
-      <td>${modifiedTheory.bestCase}</td>
-      <td>${dpTheory.bestCase}</td>
+      <td>${energyTheory.bestCase}</td>
     </tr>
     <tr>
       <td>Average-case time complexity</td>
       <td>${standardTheory.averageCase}</td>
-      <td>${modifiedTheory.averageCase}</td>
-      <td>${dpTheory.averageCase}</td>
+      <td>${energyTheory.averageCase}</td>
     </tr>
     <tr>
       <td>Worst-case time complexity</td>
       <td>${standardTheory.worstCase}</td>
-      <td>${modifiedTheory.worstCase}</td>
-      <td>${dpTheory.worstCase}</td>
+      <td>${energyTheory.worstCase}</td>
     </tr>
   `;
 }
@@ -1161,9 +1027,8 @@ function renderPathSummary() {
   }
 
   const standardPath = state.results.standard.path;
-  const modifiedPath = state.results.modified.path;
-  const dpPath = state.results.dp.path;
-  const pathChanged = JSON.stringify(standardPath) !== JSON.stringify(modifiedPath);
+  const energyPath = state.results.energy.path;
+  const pathChanged = JSON.stringify(standardPath) !== JSON.stringify(energyPath);
   const windMode = state.environment.dynamicWindEnabled
     ? `Dynamic (shift at step ${state.environment.windShiftStep}: ${state.environment.windDirection}/${state.environment.windStrength.toFixed(1)} -> ${state.environment.windDirectionAfterShift}/${state.environment.windStrengthAfterShift.toFixed(1)})`
     : `Static (${state.environment.windDirection}/${state.environment.windStrength.toFixed(1)})`;
@@ -1175,30 +1040,29 @@ function renderPathSummary() {
     `Wind mode: ${windMode}\n` +
     `Paths differ: ${pathChanged ? "Yes" : "No"}\n\n` +
     `Standard path:\n${formatPath(standardPath)}\n\n` +
-    `Energy-aware path:\n${formatPath(modifiedPath)}`;
+    `Energy-Aware A* path:\n${formatPath(energyPath)}`;
 
-  elements.pathSummary.textContent += `\n\nBellman-Ford DP path:\n${formatPath(dpPath)}`;
 }
 
-function describeMetricDifference(metricName, standardValue, modifiedValue, options = {}) {
+function describeMetricDifference(metricName, standardValue, candidateValue, options = {}) {
   const { unit = "", digits = 2, lowerIsBetter = true } = options;
 
-  if (!Number.isFinite(standardValue) || !Number.isFinite(modifiedValue)) {
+  if (!Number.isFinite(standardValue) || !Number.isFinite(candidateValue)) {
     return `${metricName}: could not be compared for this run.`;
   }
 
-  const delta = modifiedValue - standardValue;
+  const delta = candidateValue - standardValue;
   if (Math.abs(delta) < 0.000001) {
-    return `${metricName}: both values are effectively equal (${formatNumber(modifiedValue, digits)}${unit}).`;
+    return `${metricName}: both values are effectively equal (${formatNumber(candidateValue, digits)}${unit}).`;
   }
 
   const directionWord = delta < 0 ? "lower" : "higher";
   const betterWord = lowerIsBetter ? (delta < 0 ? "better" : "worse") : delta > 0 ? "better" : "worse";
-  const deltaPercent = percentDelta(standardValue, modifiedValue);
+  const deltaPercent = percentDelta(standardValue, candidateValue);
   const percentText = deltaPercent === null ? "" : ` (${formatSignedNumber(deltaPercent, 1)}%)`;
 
   return (
-    `${metricName}: modified is ${formatNumber(Math.abs(delta), digits)}${unit} ${directionWord}` +
+    `${metricName}: candidate is ${formatNumber(Math.abs(delta), digits)}${unit} ${directionWord}` +
     `${percentText}, so it is ${betterWord} for this metric.`
   );
 }
@@ -1211,77 +1075,69 @@ function renderResultExplanation() {
   }
 
   const standard = state.results.standard;
-  const modified = state.results.modified;
-  const dp = state.results.dp;
+  const energy = state.results.energy;
 
-  if (standard.path.length === 0 || modified.path.length === 0 || dp.path.length === 0) {
+  if (standard.path.length === 0 || energy.path.length === 0) {
     elements.resultExplanation.innerHTML =
       "<h3>Case-Specific Explanation</h3><p>At least one algorithm could not find a feasible route. In this setup, obstacles or environmental penalties likely disconnected the destination.</p>";
     return;
   }
 
-  const pathChanged =
-    JSON.stringify(standard.path) !== JSON.stringify(modified.path) ||
-    JSON.stringify(standard.path) !== JSON.stringify(dp.path) ||
-    JSON.stringify(modified.path) !== JSON.stringify(dp.path);
-  const energyDelta = modified.totalEnergyCost - standard.totalEnergyCost;
-  const windDelta = modified.windPenalty - standard.windPenalty;
-  const altitudeDelta = modified.altitudePenalty - standard.altitudePenalty;
-  const dpEnergyDelta = dp.totalEnergyCost - modified.totalEnergyCost;
-  const dpTimeDelta = dp.executionTimeMs - modified.executionTimeMs;
+  const pathChanged = JSON.stringify(standard.path) !== JSON.stringify(energy.path);
+  const energyDelta = energy.totalEnergyCost - standard.totalEnergyCost;
+  const windDelta = energy.windEnergy - standard.windEnergy;
+  const gravityDelta = energy.gravityEnergy - standard.gravityEnergy;
+  const turningDelta = energy.turningEnergy - standard.turningEnergy;
   const dynamicWindText = state.environment.dynamicWindEnabled
-    ? "Dynamic wind is enabled, so the modified solver plans while accounting for the wind shift during traversal."
+    ? "Dynamic wind is enabled, so the energy-aware solver plans while accounting for the wind shift during traversal."
     : "Wind is static in this run, so differences are caused by directional wind resistance and altitude trade-offs.";
 
-  let interpretation = "In this run, modified Dijkstra improved the targeted energy objective.";
+  let interpretation = "In this run, Energy-Aware A* improved the targeted energy objective.";
   if (energyDelta > 0.000001) {
-    interpretation = "In this run, modified Dijkstra produced a higher evaluated energy cost than standard Dijkstra, which suggests this case is strongly constrained by map geometry or obstacle layout.";
+    interpretation = "In this run, Energy-Aware A* produced a higher evaluated energy cost than standard Dijkstra, which suggests this case is strongly constrained by map geometry or obstacle layout.";
   } else if (Math.abs(energyDelta) <= 0.000001) {
-    interpretation = "In this run, both methods produced nearly identical energy cost, indicating the shortest route was also energy-efficient.";
+    interpretation = "In this run, both methods produced nearly identical energy cost, indicating the distance-minimizing route was also energy-efficient.";
   }
-
-  const dpInterpretation = Math.abs(dpEnergyDelta) <= 0.000001
-    ? "Bellman-Ford DP matched the energy-aware solution because the edge weights are nonnegative and the state graph is small enough that repeated relaxation converged to the same optimum."
-    : dpEnergyDelta > 0
-      ? "Bellman-Ford DP produced a higher evaluated energy cost, which should be investigated because it usually indicates a labeling or horizon issue."
-      : "Bellman-Ford DP produced a lower evaluated energy cost than modified Dijkstra, which means the DP view found a better route in this setup.";
-
-  const dpTimeInterpretation = dpTimeDelta > 0
-    ? "Bellman-Ford DP took longer than modified Dijkstra, which is expected because it relaxes edges repeatedly instead of using a greedy priority queue."
-    : "Bellman-Ford DP was competitive with modified Dijkstra on this small grid, but its asymptotic cost is still higher on larger graphs.";
 
   const windInterpretation =
     windDelta < -0.000001
-      ? "Wind exposure is lower for modified Dijkstra, so it avoided headwind-heavy moves."
+      ? "Wind exposure is lower for Energy-Aware A*, so it avoided headwind-heavy moves."
       : windDelta > 0.000001
-        ? "Wind exposure is higher for modified Dijkstra, meaning it traded wind cost for gains elsewhere (such as altitude or route structure)."
-        : "Wind exposure is nearly the same for standard and modified Dijkstra in this case.";
+        ? "Wind exposure is higher for Energy-Aware A*, meaning it traded wind cost for gains elsewhere."
+        : "Wind exposure is nearly the same for standard and energy-aware runs.";
 
-  const altitudeInterpretation =
-    altitudeDelta < -0.000001
-      ? "Altitude penalty is lower for modified Dijkstra, so it selected a smoother elevation profile."
-      : altitudeDelta > 0.000001
-        ? "Altitude penalty is higher for modified Dijkstra, indicating it accepted more climb/descent to reduce other costs."
-        : "Altitude penalty is nearly identical for standard and modified Dijkstra.";
+  const gravityInterpretation =
+    gravityDelta < -0.000001
+      ? "Gravity energy is lower for Energy-Aware A*, so it selected a smoother climb profile."
+      : gravityDelta > 0.000001
+        ? "Gravity energy is higher for Energy-Aware A*, indicating it accepted more climb to reduce other costs."
+        : "Gravity energy is nearly identical for standard and energy-aware runs.";
+
+  const turningInterpretation =
+    turningDelta < -0.000001
+      ? "Turning energy is lower for Energy-Aware A*, meaning it favored smoother heading changes."
+      : turningDelta > 0.000001
+        ? "Turning energy is higher for Energy-Aware A*, meaning it accepted sharper turns to reduce other costs."
+        : "Turning energy is nearly identical for standard and energy-aware runs.";
 
   const pathNarrative = pathChanged
-    ? "At least one route differs, which confirms that environmental factors or DP relaxation changed path selection beyond pure shortest distance."
-    : "All three routes are the same, so shortest-distance, energy-aware optimization, and DP relaxation aligned in this setup.";
+    ? "Routes differ, which confirms that environmental energy factors changed path selection beyond pure distance minimization."
+    : "Routes are the same, so distance-minimizing and energy-aware optimization aligned in this setup.";
 
   elements.resultExplanation.innerHTML =
     "<h3>Case-Specific Explanation</h3>" +
     `<p>${pathNarrative}</p>` +
     "<ul>" +
-    `<li>${describeMetricDifference("Total energy cost", standard.totalEnergyCost, modified.totalEnergyCost, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Total distance", standard.totalDistance, modified.totalDistance, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Wind penalty", standard.windPenalty, modified.windPenalty, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Altitude penalty", standard.altitudePenalty, modified.altitudePenalty, { lowerIsBetter: true })}</li>` +
-    `<li>${describeMetricDifference("Path steps", standard.steps, modified.steps, { lowerIsBetter: true, digits: 0 })}</li>` +
+    `<li>${describeMetricDifference("Minimum energy cost", standard.totalEnergyCost, energy.totalEnergyCost, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Path distance", standard.totalDistance, energy.totalDistance, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Wind energy", standard.windEnergy, energy.windEnergy, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Gravity energy", standard.gravityEnergy, energy.gravityEnergy, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Turning energy", standard.turningEnergy, energy.turningEnergy, { lowerIsBetter: true })}</li>` +
+    `<li>${describeMetricDifference("Path steps", standard.steps, energy.steps, { lowerIsBetter: true, digits: 0 })}</li>` +
     "</ul>" +
-    `<p><strong>Bellman-Ford DP vs Modified Dijkstra:</strong> ${dpInterpretation}</p>` +
-    `<p>${dpTimeInterpretation}</p>` +
     `<p>${windInterpretation}</p>` +
-    `<p>${altitudeInterpretation}</p>` +
+    `<p>${gravityInterpretation}</p>` +
+    `<p>${turningInterpretation}</p>` +
     `<p>${dynamicWindText}</p>` +
     `<p>${interpretation}</p>`;
 }
@@ -1393,35 +1249,27 @@ function runAlgorithms() {
   };
 
   const standardAvg = benchmarkStandard(model);
-  const modifiedAvg = benchmarkModified(model);
-  const dpAvg = benchmarkBellmanFord(model);
+  const energyAvg = benchmarkEnergyAwareAStar(model);
 
   const standardStart = performance.now();
   const standard = runStandardDijkstra(model);
   const standardEnd = performance.now();
 
-  const modifiedStart = performance.now();
-  const modified = runModifiedDijkstra(model);
-  const modifiedEnd = performance.now();
+  const energyStart = performance.now();
+  const energy = runEnergyAwareAStar(model);
+  const energyEnd = performance.now();
 
-  const dpStart = performance.now();
-  const dp = runBellmanFord(model);
-  const dpEnd = performance.now();
 
   standard.actualExecutionTime = standardEnd - standardStart;
-  modified.actualExecutionTime = modifiedEnd - modifiedStart;
-  dp.actualExecutionTime = dpEnd - dpStart;
+  energy.actualExecutionTime = energyEnd - energyStart;
   standard.averageExecutionTime = standardAvg;
-  modified.averageExecutionTime = modifiedAvg;
-  dp.averageExecutionTime = dpAvg;
+  energy.averageExecutionTime = energyAvg;
   standard.executionTime = standard.actualExecutionTime;
-  modified.executionTime = modified.actualExecutionTime;
-  dp.executionTime = dp.actualExecutionTime;
+  energy.executionTime = energy.actualExecutionTime;
 
   state.results = {
     standard,
-    modified,
-    dp,
+    energy,
   };
 
   renderAll();
@@ -1432,17 +1280,17 @@ function runAlgorithms() {
     resultElement.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  const pathChanged = JSON.stringify(standard.path) !== JSON.stringify(modified.path) || JSON.stringify(modified.path) !== JSON.stringify(dp.path);
+  const pathChanged = JSON.stringify(standard.path) !== JSON.stringify(energy.path);
 
-  if (standard.path.length === 0 || modified.path.length === 0 || dp.path.length === 0) {
+  if (standard.path.length === 0 || energy.path.length === 0) {
     setStatus("No feasible route found. Remove some obstacles or adjust parameters.");
     return;
   }
 
   setStatus(
     pathChanged
-      ? "Algorithms completed. At least one route differs under environmental costs or DP relaxation."
-      : "Algorithms completed. All three selected the same route in this setup.",
+      ? "Algorithms completed. Energy-aware routing selected a different minimum-energy trajectory."
+      : "Algorithms completed. Baseline and energy-aware routing match in this setup.",
   );
 }
 
@@ -1715,8 +1563,8 @@ function bindEvents() {
   });
 
   elements.altitudeFactor.addEventListener("input", () => {
-    state.environment.altitudeFactor = Number(elements.altitudeFactor.value);
-    elements.altitudeFactorValue.textContent = state.environment.altitudeFactor.toFixed(1);
+    state.environment.mass = Number(elements.altitudeFactor.value);
+    elements.altitudeFactorValue.textContent = state.environment.mass.toFixed(1);
   });
 
   elements.dynamicWindEnabled.addEventListener("change", () => {

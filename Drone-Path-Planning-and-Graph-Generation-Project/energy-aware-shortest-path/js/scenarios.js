@@ -3,7 +3,7 @@ export const PRESET_SCENARIOS = [
     id: "ridge_escape",
     name: "Scenario 1: Ridge Escape",
     description:
-      "Steep altitude rise on the left column makes the default shortest path energy-heavy.",
+      "Steep altitude rise on the left column makes the distance-minimizing route energy-heavy.",
     altitudeGrid: [
       [0, 0, 0, 0, 0, 0, 0, 0],
       [6, 1, 1, 1, 1, 1, 1, 1],
@@ -108,7 +108,7 @@ export const PRESET_SCENARIOS = [
     id: "headwind_valley",
     name: "Scenario 4: Headwind Valley",
     description:
-      "Strong west wind blocks eastward movement. Direct path (7 steps) climbs HIGH mountains against headwind. Modified chooses 14-step detour through DEEP VALLEY where downhill benefits and lower terrain offset extra distance.",
+      "Strong west wind blocks eastward movement. Direct path (7 steps) climbs HIGH mountains against headwind. Energy-aware routing chooses a 14-step detour through a deep valley where lower terrain offsets extra distance.",
     altitudeGrid: [
       [8, 9, 9, 9, 9, 9, 8, 8],
       [7, 8, 8, 8, 8, 8, 7, 7],

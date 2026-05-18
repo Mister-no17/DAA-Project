@@ -1,4 +1,9 @@
 import { MinPriorityQueue } from "./priorityQueue.js";
+import { computeEnergyComponents } from "./energy/totalEnergy.js";
+import {
+  energyAStarGrid,
+  energyAStarGridTimeAware,
+} from "./algorithms/energyAStar.js";
 
 export const DIRECTION_VECTORS = Object.freeze({
   N: [-1, 0],
@@ -14,6 +19,12 @@ export const DIRECTION_VECTORS = Object.freeze({
 export const DEFAULT_ENVIRONMENT = Object.freeze({
   windDirection: "E",
   windStrength: 1.5,
+  distanceCoefficient: 1.0,
+  averageEnergyFactor: 1.0,
+  windCoefficient: 1.0,
+  turningCoefficient: 0.0,
+  mass: 1.0,
+  gravity: 9.81,
   altitudeFactor: 1.0,
   downhillFactor: 0.35,
   dynamicWindEnabled: false,
@@ -118,56 +129,47 @@ export function getWindStateAtStep(step, environment) {
   };
 }
 
-export function computeWindEffect(from, to, windDirection, windStrength) {
-  const windVector = DIRECTION_VECTORS[windDirection] ?? DIRECTION_VECTORS.E;
-  const moveRow = to[0] - from[0];
-  const moveCol = to[1] - from[1];
-  const norm = Math.hypot(moveRow, moveCol) || 1;
-
-  const unitMoveRow = moveRow / norm;
-  const unitMoveCol = moveCol / norm;
-  const dot = unitMoveRow * windVector[0] + unitMoveCol * windVector[1];
-
-  return windStrength * (1 - dot);
-}
-
-export function computeAltitudeCost(from, to, altitudeGrid, altitudeFactor, downhillFactor = 0.35) {
-  const currentAltitude = altitudeGrid[from[0]][from[1]];
-  const nextAltitude = altitudeGrid[to[0]][to[1]];
-  const climb = Math.max(0, nextAltitude - currentAltitude);
-  const descent = Math.max(0, currentAltitude - nextAltitude);
-
-  return altitudeFactor * (climb + downhillFactor * descent);
+function normalizeEnergyEnvironment(environment) {
+  return {
+    ...environment,
+    distanceCoefficient: environment.distanceCoefficient ?? 1.0,
+    windCoefficient: environment.windCoefficient ?? 1.0,
+    turningCoefficient: environment.turningCoefficient ?? 0.0,
+    mass: environment.mass ?? environment.altitudeFactor ?? 1.0,
+    gravity: environment.gravity ?? 9.81,
+  };
 }
 
 export function computeEnergyEdgeCost(from, to, altitudeGrid, environment) {
-  const distance = geometricDistance(from, to);
   const windState = getWindStateAtStep(0, environment);
-  const wind = computeWindEffect(from, to, windState.direction, windState.strength);
-  const altitude = computeAltitudeCost(
+  const energyEnv = normalizeEnergyEnvironment(environment);
+  const components = computeEnergyComponents({
     from,
     to,
+    prev: null,
     altitudeGrid,
-    environment.altitudeFactor,
-    environment.downhillFactor,
-  );
+    environment: energyEnv,
+    windState,
+    directionVectors: DIRECTION_VECTORS,
+  });
 
-  return distance + wind + altitude;
+  return components.totalEnergy;
 }
 
 export function computeEnergyEdgeCostAtStep(from, to, altitudeGrid, environment, step = 0) {
-  const distance = geometricDistance(from, to);
   const windState = getWindStateAtStep(step, environment);
-  const wind = computeWindEffect(from, to, windState.direction, windState.strength);
-  const altitude = computeAltitudeCost(
+  const energyEnv = normalizeEnergyEnvironment(environment);
+  const components = computeEnergyComponents({
     from,
     to,
+    prev: null,
     altitudeGrid,
-    environment.altitudeFactor,
-    environment.downhillFactor,
-  );
+    environment: energyEnv,
+    windState,
+    directionVectors: DIRECTION_VECTORS,
+  });
 
-  return distance + wind + altitude;
+  return components.totalEnergy;
 }
 
 export function dijkstraGrid({ rows, cols, start, end, weightFn, blockedSet }) {
@@ -490,41 +492,48 @@ export function evaluatePathMetrics(path, altitudeGrid, environment) {
       distance: Number.POSITIVE_INFINITY,
       energyCost: Number.POSITIVE_INFINITY,
       steps: 0,
-      windPenalty: Number.POSITIVE_INFINITY,
-      altitudePenalty: Number.POSITIVE_INFINITY,
+      windEnergy: Number.POSITIVE_INFINITY,
+      gravityEnergy: Number.POSITIVE_INFINITY,
+      turningEnergy: Number.POSITIVE_INFINITY,
     };
   }
 
   let distance = 0;
   let energyCost = 0;
-  let windPenalty = 0;
-  let altitudePenalty = 0;
+  let windEnergy = 0;
+  let gravityEnergy = 0;
+  let turningEnergy = 0;
+  const energyEnv = normalizeEnergyEnvironment(environment);
 
   for (let i = 0; i < path.length - 1; i += 1) {
     const from = path[i];
     const to = path[i + 1];
-    const edgeDistance = geometricDistance(from, to);
+    const prev = i > 0 ? path[i - 1] : null;
     const windState = getWindStateAtStep(i, environment);
-    const wind = computeWindEffect(from, to, windState.direction, windState.strength);
-    const altitude = computeAltitudeCost(
+    const components = computeEnergyComponents({
       from,
       to,
+      prev,
       altitudeGrid,
-      environment.altitudeFactor,
-      environment.downhillFactor,
-    );
-    distance += edgeDistance;
-    windPenalty += wind;
-    altitudePenalty += altitude;
-    energyCost += edgeDistance + wind + altitude;
+      environment: energyEnv,
+      windState,
+      directionVectors: DIRECTION_VECTORS,
+    });
+
+    distance += components.distance;
+    windEnergy += components.windEnergy;
+    gravityEnergy += components.gravityEnergy;
+    turningEnergy += components.turningEnergy;
+    energyCost += components.totalEnergy;
   }
 
   return {
     distance,
     energyCost,
     steps: Math.max(0, path.length - 1),
-    windPenalty,
-    altitudePenalty,
+    windEnergy,
+    gravityEnergy,
+    turningEnergy,
   };
 }
 
@@ -548,14 +557,15 @@ export function runStandardDijkstra(model) {
 
   return {
     algorithm: "Standard Dijkstra",
-    optimizedFor: "Distance",
+    optimizedFor: "Baseline distance",
     path: searchResult.path,
     objectiveCost: searchResult.objectiveCost,
     totalDistance: metrics.distance,
     totalEnergyCost: metrics.energyCost,
     steps: metrics.steps,
-    windPenalty: metrics.windPenalty,
-    altitudePenalty: metrics.altitudePenalty,
+    windEnergy: metrics.windEnergy,
+    gravityEnergy: metrics.gravityEnergy,
+    turningEnergy: metrics.turningEnergy,
     blockedCells: blockedSet.size,
     expandedNodes: searchResult.expandedNodes,
     uniqueVisitedNodes: searchResult.uniqueVisitedNodes ?? searchResult.expandedNodes,
@@ -565,11 +575,15 @@ export function runStandardDijkstra(model) {
   };
 }
 
-export function runModifiedDijkstra(model) {
+export function runEnergyAwareAStar(model) {
   const rows = model.altitudeGrid.length;
   const cols = model.altitudeGrid[0].length;
   const startTime = performance.now();
   const blockedSet = model.blockedSet ?? new Set();
+
+  const heuristicBase = model.environment.averageEnergyFactor ?? model.environment.distanceCoefficient ?? 1.0;
+  const energyCoefficient = Math.max(0, heuristicBase);
+  const heuristicFn = (coord) => energyCoefficient * geometricDistance(coord, model.end);
 
   const dynamicMode = model.environment.dynamicWindEnabled;
 
@@ -581,23 +595,25 @@ export function runModifiedDijkstra(model) {
       Math.floor(rows * cols * (model.environment.maxStepMultiplier ?? 2.5)),
     );
 
-    searchResult = dijkstraGridTimeAware({
+    searchResult = energyAStarGridTimeAware({
       rows,
       cols,
       start: model.start,
       end: model.end,
       blockedSet,
       maxSteps: horizon,
+      heuristicFn,
       weightFn: (from, to, step) =>
         computeEnergyEdgeCostAtStep(from, to, model.altitudeGrid, model.environment, step),
     });
   } else {
-    searchResult = dijkstraGrid({
+    searchResult = energyAStarGrid({
       rows,
       cols,
       start: model.start,
       end: model.end,
       blockedSet,
+      heuristicFn,
       weightFn: (from, to) => computeEnergyEdgeCost(from, to, model.altitudeGrid, model.environment),
     });
   }
@@ -606,24 +622,51 @@ export function runModifiedDijkstra(model) {
   const metrics = evaluatePathMetrics(searchResult.path, model.altitudeGrid, model.environment);
 
   return {
-    algorithm: "Modified Dijkstra",
+    algorithm: "Energy-Aware A*",
     optimizedFor: dynamicMode
-      ? "Distance + Wind + Altitude + Time Shift"
-      : "Distance + Wind + Altitude",
+      ? "Minimum-energy trajectory (dynamic wind)"
+      : "Minimum-energy trajectory",
     path: searchResult.path,
     objectiveCost: searchResult.objectiveCost,
     totalDistance: metrics.distance,
     totalEnergyCost: metrics.energyCost,
     steps: metrics.steps,
-    windPenalty: metrics.windPenalty,
-    altitudePenalty: metrics.altitudePenalty,
+    windEnergy: metrics.windEnergy,
+    gravityEnergy: metrics.gravityEnergy,
+    turningEnergy: metrics.turningEnergy,
     blockedCells: blockedSet.size,
     expandedNodes: searchResult.expandedNodes,
     uniqueVisitedNodes: searchResult.uniqueVisitedNodes ?? searchResult.expandedNodes,
     relaxationOperations: searchResult.relaxationOperations ?? 0,
+    heuristicEvaluations: searchResult.heuristicEvaluations ?? 0,
     executionTimeMs,
     dynamicWindUsed: dynamicMode,
     arrivalStep: searchResult.arrivalStep ?? metrics.steps,
+  };
+}
+
+export function runEnergyAwareThetaPlaceholder(model) {
+  const blockedSet = model.blockedSet ?? new Set();
+
+  return {
+    algorithm: "Energy-Aware Theta* (Placeholder)",
+    optimizedFor: "Minimum-energy trajectory (future Theta*)",
+    path: [],
+    objectiveCost: Number.NaN,
+    totalDistance: Number.NaN,
+    totalEnergyCost: Number.NaN,
+    steps: 0,
+    windEnergy: Number.NaN,
+    gravityEnergy: Number.NaN,
+    turningEnergy: Number.NaN,
+    blockedCells: blockedSet.size,
+    expandedNodes: 0,
+    uniqueVisitedNodes: 0,
+    relaxationOperations: 0,
+    executionTimeMs: 0,
+    dynamicWindUsed: false,
+    arrivalStep: -1,
+    isPlaceholder: true,
   };
 }
 
@@ -671,15 +714,16 @@ export function runBellmanFord(model) {
   return {
     algorithm: dynamicMode ? "Time-Expanded DP (Bellman-Ford fallback)" : "Bellman-Ford (DP)",
     optimizedFor: dynamicMode
-      ? "Distance + Wind + Altitude + Time Shift"
-      : "Distance + Wind + Altitude",
+      ? "Minimum-energy trajectory (dynamic wind)"
+      : "Minimum-energy trajectory",
     path: searchResult.path,
     objectiveCost: searchResult.objectiveCost,
     totalDistance: metrics.distance,
     totalEnergyCost: metrics.energyCost,
     steps: metrics.steps,
-    windPenalty: metrics.windPenalty,
-    altitudePenalty: metrics.altitudePenalty,
+    windEnergy: metrics.windEnergy,
+    gravityEnergy: metrics.gravityEnergy,
+    turningEnergy: metrics.turningEnergy,
     blockedCells: blockedSet.size,
     expandedNodes: searchResult.expandedNodes,
     uniqueVisitedNodes: searchResult.uniqueVisitedNodes ?? searchResult.expandedNodes,

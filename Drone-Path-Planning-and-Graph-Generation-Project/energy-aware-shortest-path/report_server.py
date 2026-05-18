@@ -60,9 +60,6 @@ def estimate_ops(algorithm_name: str, vertices: int, edges: int) -> float:
     if vertices <= 1 or edges <= 0:
         return 0.0
 
-    if algorithm_name == "Bellman-Ford (DP)":
-        return vertices * edges
-
     return (vertices + edges) * math.log2(vertices)
 
 
@@ -75,7 +72,8 @@ def compute_edge_components(
         return {
             "distance": 0.0,
             "wind": 0.0,
-            "altitude": 0.0,
+            "gravity": 0.0,
+            "turning": 0.0,
         }
 
     wind_direction = environment.get("windDirection", "E")
@@ -84,12 +82,25 @@ def compute_edge_components(
     wind_shift_step = int(environment.get("windShiftStep", 0) or 0)
     wind_direction_after = environment.get("windDirectionAfterShift", wind_direction)
     wind_strength_after = float(environment.get("windStrengthAfterShift", wind_strength))
-    altitude_factor = float(environment.get("altitudeFactor", 0.0))
-    downhill_factor = float(environment.get("downhillFactor", 0.35))
+    distance_coefficient = float(environment.get("distanceCoefficient", 1.0))
+    wind_coefficient = float(environment.get("windCoefficient", 1.0))
+    turning_coefficient = float(environment.get("turningCoefficient", 0.0))
+    mass = float(environment.get("mass", environment.get("altitudeFactor", 1.0)))
+    gravity = float(environment.get("gravity", 9.81))
 
     distance_total = 0.0
     wind_total = 0.0
-    altitude_total = 0.0
+    gravity_total = 0.0
+    turning_total = 0.0
+
+    def turning_angle(prev_vec: Tuple[float, float], next_vec: Tuple[float, float]) -> float:
+        prev_norm = math.hypot(prev_vec[0], prev_vec[1])
+        next_norm = math.hypot(next_vec[0], next_vec[1])
+        if prev_norm == 0 or next_norm == 0:
+            return 0.0
+        dot = (prev_vec[0] * next_vec[0] + prev_vec[1] * next_vec[1]) / (prev_norm * next_norm)
+        clamped = max(-1.0, min(1.0, dot))
+        return math.acos(clamped)
 
     for idx in range(len(path) - 1):
         from_node = path[idx]
@@ -108,24 +119,39 @@ def compute_edge_components(
         norm = math.hypot(move_row, move_col) or 1.0
         unit_row = move_row / norm
         unit_col = move_col / norm
-        dot = unit_row * wind_vector[0] + unit_col * wind_vector[1]
+        wind_norm = math.hypot(wind_vector[0], wind_vector[1]) or 1.0
+        unit_wind_row = wind_vector[0] / wind_norm
+        unit_wind_col = wind_vector[1] / wind_norm
+        dot = unit_row * unit_wind_row + unit_col * unit_wind_col
+        clamped = max(-1.0, min(1.0, dot))
+        theta = math.acos(clamped)
 
         distance = math.hypot(move_row, move_col)
-        wind_effect = active_strength * (1 - dot)
+        wind_effect = wind_coefficient * active_strength * (1 - math.cos(theta))
         current_alt = altitude_grid[from_node[0]][from_node[1]]
         next_alt = altitude_grid[to_node[0]][to_node[1]]
         climb = max(0.0, next_alt - current_alt)
-        descent = max(0.0, current_alt - next_alt)
-        altitude_cost = altitude_factor * (climb + downhill_factor * descent)
+        gravity_cost = mass * gravity * climb
 
-        distance_total += distance
+        if idx > 0:
+            prev_node = path[idx - 1]
+            prev_vec = (from_node[0] - prev_node[0], from_node[1] - prev_node[1])
+            next_vec = (to_node[0] - from_node[0], to_node[1] - from_node[1])
+            turn_angle = turning_angle(prev_vec, next_vec)
+        else:
+            turn_angle = 0.0
+        turning_cost = turning_coefficient * turn_angle
+
+        distance_total += distance_coefficient * distance
         wind_total += wind_effect
-        altitude_total += altitude_cost
+        gravity_total += gravity_cost
+        turning_total += turning_cost
 
     return {
         "distance": distance_total,
         "wind": wind_total,
-        "altitude": altitude_total,
+        "gravity": gravity_total,
+        "turning": turning_total,
     }
 
 
@@ -134,7 +160,7 @@ def plot_cost_comparison(metrics: Dict[str, Dict[str, float]], output_path: Path
     costs = [metrics[name]["totalEnergyCost"] for name in names]
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    bars = ax.bar(names, costs, color=["#f08c00", "#0d8cb6", "#7a4ae0"])
+    bars = ax.bar(names, costs, color=["#f08c00", "#0d8cb6"])
     ax.set_title("Total Energy Cost Comparison")
     ax.set_ylabel("Energy Cost")
     ax.bar_label(bars, fmt="%.2f")
@@ -148,7 +174,7 @@ def plot_nodes_explored(metrics: Dict[str, Dict[str, float]], output_path: Path)
     nodes = [metrics[name]["expandedNodes"] for name in names]
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    bars = ax.bar(names, nodes, color=["#f08c00", "#0d8cb6", "#7a4ae0"])
+    bars = ax.bar(names, nodes, color=["#f08c00", "#0d8cb6"])
     ax.set_title("Expanded Nodes Comparison")
     ax.set_ylabel("Expanded Nodes")
     ax.bar_label(bars)
@@ -162,8 +188,7 @@ def plot_altitude_profile(paths: Dict[str, List[List[int]]], altitude_grid: List
 
     colors = {
         "Standard Dijkstra": "red",
-        "Modified Dijkstra": "blue",
-        "Bellman-Ford (DP)": "purple",
+        "Energy-Aware A*": "blue",
     }
 
     for name, path in paths.items():
@@ -228,8 +253,7 @@ def plot_3d_route_visualization(
 
     styles = {
         "Standard Dijkstra": {"color": "red", "linestyle": "--", "linewidth": 2.2},
-        "Modified Dijkstra": {"color": "#1e6cf2", "linestyle": "-", "linewidth": 2.6},
-        "Bellman-Ford (DP)": {"color": "#7a4ae0", "linestyle": ":", "linewidth": 2.2},
+        "Energy-Aware A*": {"color": "#1e6cf2", "linestyle": "-", "linewidth": 2.6},
     }
 
     for name, path in paths.items():
@@ -282,13 +306,16 @@ def plot_edge_cost_breakdown(components: Dict[str, Dict[str, float]], output_pat
     names = list(components.keys())
     distance_vals = [components[name]["distance"] for name in names]
     wind_vals = [components[name]["wind"] for name in names]
-    altitude_vals = [components[name]["altitude"] for name in names]
+    gravity_vals = [components[name]["gravity"] for name in names]
+    turning_vals = [components[name]["turning"] for name in names]
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.bar(names, distance_vals, label="Distance", color="#f6b04b")
     ax.bar(names, wind_vals, bottom=distance_vals, label="Wind", color="#4fb0d1")
     stacked = [distance_vals[i] + wind_vals[i] for i in range(len(names))]
-    ax.bar(names, altitude_vals, bottom=stacked, label="Altitude", color="#9165e6")
+    ax.bar(names, gravity_vals, bottom=stacked, label="Gravity", color="#7a4ae0")
+    stacked = [stacked[i] + gravity_vals[i] for i in range(len(names))]
+    ax.bar(names, turning_vals, bottom=stacked, label="Turning", color="#2f8f6b")
 
     ax.set_title("Edge Cost Breakdown")
     ax.set_ylabel("Cost")
@@ -299,19 +326,29 @@ def plot_edge_cost_breakdown(components: Dict[str, Dict[str, float]], output_pat
 
 
 def build_metrics_payload(algorithms: List[Dict[str, float]], vertices: int, edges: int) -> Dict[str, Dict[str, float]]:
+    def safe_float(value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return number if math.isfinite(number) else 0.0
+
     metrics: Dict[str, Dict[str, float]] = {}
     for entry in algorithms:
         name = entry["name"]
+        is_placeholder = bool(entry.get("isPlaceholder", False))
         metrics[name] = {
-            "executionTimeMs": entry["executionTimeMs"],
-            "expandedNodes": entry["expandedNodes"],
-            "totalEnergyCost": entry["totalEnergyCost"],
-            "totalDistance": entry["totalDistance"],
-            "windPenalty": entry["windPenalty"],
-            "altitudePenalty": entry["altitudePenalty"],
-            "objectiveCost": entry["objectiveCost"],
+            "executionTimeMs": safe_float(entry.get("executionTimeMs")),
+            "expandedNodes": safe_float(entry.get("expandedNodes")),
+            "totalEnergyCost": safe_float(entry.get("totalEnergyCost")),
+            "totalDistance": safe_float(entry.get("totalDistance")),
+            "windEnergy": safe_float(entry.get("windEnergy")),
+            "gravityEnergy": safe_float(entry.get("gravityEnergy")),
+            "turningEnergy": safe_float(entry.get("turningEnergy")),
+            "heuristicEvaluations": safe_float(entry.get("heuristicEvaluations")),
+            "objectiveCost": safe_float(entry.get("objectiveCost")),
             "estimatedOperations": estimate_ops(name, vertices, edges),
-            "theoreticalComplexity": "O(VE)" if name == "Bellman-Ford (DP)" else "O((V + E) log V)",
+            "theoreticalComplexity": "N/A" if is_placeholder else "O((V + E) log V)",
         }
     return metrics
 
@@ -364,8 +401,7 @@ def handle_report(payload: Dict[str, object]) -> Dict[str, str]:
     paths = payload.get("paths", {})
     path_map = {
         "Standard Dijkstra": paths.get("standard", []),
-        "Modified Dijkstra": paths.get("modified", []),
-        "Bellman-Ford (DP)": paths.get("bellmanFord", []),
+        "Energy-Aware A*": paths.get("energyAStar", []),
     }
 
     component_totals = {}

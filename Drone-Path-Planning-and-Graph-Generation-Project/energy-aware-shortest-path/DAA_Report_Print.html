@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DAA Report - Energy-Aware Shortest Path</title>
+  <title>DAA Report - Energy-Aware Minimum-Energy Trajectory</title>
   <style>
     :root {
       --ink: #1b1f24;
@@ -148,22 +148,22 @@
 </head>
 <body>
   <article class="page">
-    <h1>Energy-Aware Shortest Path Algorithm with Environmental Factors</h1>
+    <h1>Energy-Aware Minimum-Energy Trajectory Optimization</h1>
     <p class="meta">
       DAA Course Mini-Project Report | Student: ____________________ | Roll No: ____________________
     </p>
 
     <h2>1. Problem Definition</h2>
     <p>
-      Classical shortest path routing minimizes distance, but real navigation may require minimizing energy.
-      This project compares Standard Dijkstra with a Modified Dijkstra that includes environmental factors.
+      Classical distance-minimizing routing optimizes path length, but real navigation may require minimizing energy.
+      This project compares Standard Dijkstra with an Energy-Aware A* formulation that includes environmental factors.
     </p>
-    <div class="equation">cost = distance + wind_effect + altitude_cost</div>
+    <div class="equation">E_total = E_distance + E_gravity + E_wind + E_turn</div>
 
     <h2>2. Objective</h2>
     <ol>
       <li>Implement baseline Standard Dijkstra.</li>
-      <li>Implement Modified Dijkstra with environmental cost.</li>
+      <li>Implement Energy-Aware A* with environmental energy cost.</li>
       <li>Add obstacle-aware routing (no-fly zones).</li>
       <li>Add sudden wind-shift support (time-dependent costs).</li>
       <li>Compare outputs visually and numerically.</li>
@@ -173,21 +173,27 @@
     <ul>
       <li>2D grid graph; each cell is a node.</li>
       <li>4-neighbor movement (up, down, left, right).</li>
-      <li>Wind direction and strength influence directional movement cost.</li>
-      <li>Altitude values per cell model climb and descent energy.</li>
+      <li>Wind direction and strength influence directional energy.</li>
+      <li>Altitude values per cell model uphill climb energy (downhill adds no gravity cost).</li>
       <li>Blocked cells are treated as obstacles and removed from traversal.</li>
     </ul>
 
-    <h3>3.1 Wind Effect</h3>
-    <div class="equation">wind_effect = wind_strength * (1 - dot(move_unit, wind_unit))</div>
+    <h3>3.1 Distance Energy</h3>
+    <div class="equation">E_distance = k_d * distance</div>
 
-    <h3>3.2 Altitude Cost</h3>
+    <h3>3.2 Gravity Energy</h3>
     <div class="equation">
-      climb = max(0, altitude_to - altitude_from), descent = max(0, altitude_from - altitude_to)<br />
-      altitude_cost = altitude_factor * (climb + downhill_factor * descent)
+      altitude_gain = max(0, altitude_to - altitude_from)<br />
+      E_gravity = m * g * altitude_gain
     </div>
 
-    <h3>3.3 Dynamic Wind Shift</h3>
+    <h3>3.3 Wind Energy</h3>
+    <div class="equation">E_wind = k_w * wind_strength * (1 - cos(theta))</div>
+
+    <h3>3.4 Turning Energy</h3>
+    <div class="equation">E_turn = k_t * turning_angle</div>
+
+    <h3>3.5 Dynamic Wind Shift</h3>
     <div class="equation">
       if step &lt; shift_step use (direction_before, strength_before), else use (direction_after, strength_after)
     </div>
@@ -214,7 +220,7 @@
 
   return path, dist[goal]</pre>
 
-    <h3>4.2 Modified Dijkstra</h3>
+    <h3>4.2 Energy-Aware A*</h3>
     <pre>DIJKSTRA_ENERGY(grid, altitude, start, goal, wind_direction, wind_strength, altitude_factor):
   initialize dist[v] = INF, parent[v] = NIL
   dist[start] = 0
@@ -311,7 +317,7 @@ under non-negative weights.</pre>
 
     <h2>7. Conclusion</h2>
     <p>
-      The modified Dijkstra keeps the same asymptotic efficiency as baseline Dijkstra but improves path realism
+      The energy-aware A* keeps the same asymptotic efficiency as baseline Dijkstra but improves path realism
       by including environment-aware movement cost. In all tested scenarios, modified routing reduced energy
       cost while retaining feasible path lengths.
     </p>

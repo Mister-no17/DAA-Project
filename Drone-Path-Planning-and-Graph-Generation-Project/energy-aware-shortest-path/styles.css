@@ -10,7 +10,7 @@
   --accent-secondary: #f0a42b;
   --path-standard: #f08c00;
   --path-energy: #0d8cb6;
-  --path-dp: #7a4ae0;
+  --path-theta: #7a4ae0;
   --path-overlap: #3c6e57;
   --start-color: #1f9a44;
   --end-color: #c93c2f;
@@ -415,8 +415,8 @@ button:hover {
   background: var(--path-energy);
 }
 
-.swatch.dp {
-  background: var(--path-dp);
+.swatch.theta {
+  background: var(--path-theta);
 }
 
 .swatch.overlap {
@@ -500,7 +500,7 @@ button:hover {
   box-shadow: inset 0 0 0 3px rgba(13, 140, 182, 0.85);
 }
 
-.grid-cell.path-dp {
+.grid-cell.path-theta {
   box-shadow: inset 0 0 0 3px rgba(122, 74, 224, 0.9);
 }
 
@@ -530,7 +530,7 @@ button:hover {
   --flow-glow-strong: rgba(0, 200, 255, 0.6);
 }
 
-.grid-cell.path-flow-dp {
+.grid-cell.path-flow-theta {
   --flow-outline: rgba(122, 74, 224, 0.95);
   --flow-glow-weak: rgba(122, 74, 224, 0.18);
   --flow-glow-strong: rgba(200, 100, 255, 0.6);

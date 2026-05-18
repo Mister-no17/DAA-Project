@@ -1,25 +1,26 @@
-# Energy-Aware Shortest Path Algorithm with Environmental Factors
+# Energy-Aware Minimum-Energy Trajectory Optimization
 
 A complete DAA mini-project that compares:
 
 1. Standard Dijkstra (distance-only optimization)
-2. Modified Dijkstra (energy-aware optimization)
+2. Energy-Aware A* (heuristic energy optimization)
+3. Energy-Aware Theta* (placeholder only)
 
-The modified version uses this custom edge cost:
+The energy-aware version uses this modular energy model:
 
-cost = distance + wind_effect + altitude_cost
+E_total = E_distance + E_gravity + E_wind + E_turn
 
-where movement direction, wind direction/intensity, and altitude changes influence edge weights.
+where movement direction, wind direction/intensity, and uphill altitude gain influence edge weights.
 
 ## Problem Definition
 
-Traditional shortest path minimizes distance, but real systems such as drones often optimize energy. This project models a grid-based environment where each move has an energy implication due to wind and terrain.
+Traditional distance-minimizing routing optimizes for path length, but real systems such as drones often optimize energy. This project models a grid-based environment where each move has an energy implication due to wind and terrain.
 
 Goal:
 
-1. Find a shortest-distance path (baseline).
-2. Find a minimum-energy path (modified algorithm).
-3. Compare both paths and metrics interactively.
+1. Find a distance-minimizing path (baseline).
+2. Find a minimum-energy trajectory (energy-aware algorithm).
+3. Compare both trajectories and metrics interactively.
 
 ## Project Structure
 
@@ -58,14 +59,15 @@ Additional advanced behavior:
 1. Distance:
 - Euclidean distance between adjacent cells (equals 1 for 4-neighbor movement).
 
-2. Wind effect:
-- wind_effect = wind_strength * (1 - dot(move_unit, wind_unit))
+2. Gravity energy:
+- E_gravity = m * g * max(0, altitude_to - altitude_from)
+
+3. Wind energy:
+- E_wind = k_w * wind_strength * (1 - cos(theta))
 - Tailwind gives lower penalty, headwind gives higher penalty.
 
-3. Altitude cost:
-- climb = max(0, altitude_to - altitude_from)
-- descent = max(0, altitude_from - altitude_to)
-- altitude_cost = altitude_factor * (climb + downhill_factor * descent)
+4. Turning energy:
+- E_turn = k_t * turning_angle
 
 4. Obstacle constraint:
 - blocked nodes are treated as non-traversable (effectively infinite cost).
@@ -79,17 +81,17 @@ Standard Dijkstra uses only geometric distance as edge weight.
 - Objective: minimize total travel distance
 - Weight(u, v) = distance(u, v)
 
-### 2) Modified Dijkstra (Energy-Aware)
+### 2) Energy-Aware A* (Energy-Aware)
 
 The same Dijkstra framework is retained, but edge weight is changed.
 
-- Objective: minimize total energy-aware cost
-- Weight(u, v) = distance + wind_effect + altitude_cost
+- Objective: minimize minimum-energy trajectory cost
+- Weight(u, v) = E_distance + E_gravity + E_wind + E_turn
 
 Advanced mode:
 
-1. If dynamic wind is disabled, modified Dijkstra runs on normal node states.
-2. If dynamic wind is enabled, modified Dijkstra uses a time-expanded state (node, step).
+1. If dynamic wind is disabled, Energy-Aware A* runs on normal node states.
+2. If dynamic wind is enabled, Energy-Aware A* uses a time-expanded state (node, step).
 3. Edge cost is evaluated using wind parameters valid at that specific step.
 
 The key modification is only in edge relaxation weight calculation, making it easy to explain and compare during evaluation.
@@ -125,10 +127,10 @@ DIJKSTRA_DISTANCE(grid, start, goal):
     return reconstruct_path(parent, start, goal), dist[goal]
 ```
 
-### Modified Dijkstra (Energy-Aware)
+### Energy-Aware A* (Energy-Aware)
 
 ```text
-DIJKSTRA_ENERGY(grid, altitude, start, goal, wind_direction, wind_strength, altitude_factor):
+ENERGY_ASTAR(grid, altitude, start, goal, wind_direction, wind_strength, mass, gravity):
     for each node v in grid:
         dist[v] <- INF
         parent[v] <- NIL
@@ -146,13 +148,12 @@ DIJKSTRA_ENERGY(grid, altitude, start, goal, wind_direction, wind_strength, alti
 
         for each neighbor v of u:
             distance <- geometric_distance(u, v)
-            wind_effect <- wind_strength * (1 - dot(move_unit(u, v), wind_unit(wind_direction)))
-
             climb <- max(0, altitude[v] - altitude[u])
-            descent <- max(0, altitude[u] - altitude[v])
-            altitude_cost <- altitude_factor * (climb + downhill_factor * descent)
-
-            w <- distance + wind_effect + altitude_cost
+            E_distance <- k_d * distance
+            E_gravity <- m * g * climb
+            E_wind <- k_w * wind_strength * (1 - cos(theta))
+            E_turn <- k_t * turning_angle
+            w <- E_distance + E_gravity + E_wind + E_turn
 
             if dist[u] + w < dist[v]:
                 dist[v] <- dist[u] + w
@@ -185,8 +186,8 @@ For dynamic wind mode (time-expanded Dijkstra):
 Trade-offs:
 
 1. Standard Dijkstra gives shortest route by distance, but may consume higher energy.
-2. Modified Dijkstra may pick a longer route in distance if it significantly reduces environmental cost.
-3. Modified version is more realistic for drone planning but requires domain-specific parameter tuning.
+2. Energy-Aware A* may pick a longer route in distance if it significantly reduces energy cost.
+3. Energy-aware routing is more realistic for drone planning but requires domain-specific parameter tuning.
 
 Edge cases handled:
 
